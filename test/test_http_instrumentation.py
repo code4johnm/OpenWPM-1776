@@ -1050,15 +1050,29 @@ def test_cache_hits_recorded(http_params, task_manager_creator):
     for this image when the page is reloaded. Additionally, the redirects
     should be cached.
     """
-    test_url = utilities.BASE_TEST_URL + "/http_test_page.html"
+    import uuid
+
+    base_url = utilities.BASE_TEST_URL + "/http_test_page.html"
+    # Use a cache-busting parameter on the *first* visit to ensure we never
+    # accidentally pick up HTTP cache entries from previous test runs or
+    # other tests that may have left cacheable responses for the same URLs.
+    # This significantly reduces flakiness in CI (see #1162).
+    cache_bust = str(uuid.uuid4())
+    first_load_url = f"{base_url}?cachebust={cache_bust}"
+
     manager_params, browser_params = http_params()
     # ensuring that we only spawn one browser
     manager_params.num_browsers = 1
     manager, db = task_manager_creator((manager_params, [browser_params[0]]))
-    for i in range(2):
-        cs = CommandSequence(test_url, site_rank=i)
-        cs.get(sleep=5)
-        manager.execute_command_sequence(cs)
+    # First visit: cache-busted URL (should never be served from disk cache)
+    cs = CommandSequence(first_load_url, site_rank=0)
+    cs.get(sleep=5)
+    manager.execute_command_sequence(cs)
+
+    # Second visit: clean URL so the browser exercises its normal caching logic
+    cs = CommandSequence(base_url, site_rank=1)
+    cs.get(sleep=5)
+    manager.execute_command_sequence(cs)
 
     manager.close()
 

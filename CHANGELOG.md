@@ -6,6 +6,7 @@
 
 - **JS Instrumentation robustness (#1171)**: The `instrumentJS` / `instrumentObject` logic in the WebExtension now gracefully handles (and logs warnings for) cases where `eval(item.object)` or `Object.getPropertyNames(object)` throws for individual targets in a JS instrumentation collection. Previously a single failing API target would abort processing of the entire collection, causing many symbols (including common ones like `Navigator.userAgent`) to be silently un-instrumented when using custom or large `js_instrument_settings`. This makes custom fingerprinting / API collections far more reliable.
 - Cleaned up dead/unreachable `callstack_instrument` validation code in `config.py` and improved the error message with a direct link to the long-standing tracking issue (#557).
+- **Reduced flakiness in cache recording test (#1162)**: `test_cache_hits_recorded` now uses a unique `?cachebust=` parameter on the first visit of the test. This prevents the browser from serving responses from its HTTP disk cache that may have been left behind by previous test runs (due to the test server's long `max-age` headers), which was causing intermittent incorrect `is_cached` values on what should have been the first load. The second visit within the test still exercises normal caching behavior as intended.
 
 ## v0.34.0 - 2026-05-07
 
