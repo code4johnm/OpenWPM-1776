@@ -145,6 +145,22 @@ validate_crawl_configs(manager_params, browser_params)
 
 **NOTE**: If any validations fail, we raise `ConfigError`
 
+## Security and Privacy Implications of Configuration
+
+**Before choosing instrumentation settings, read [Security-and-Privacy.md](Security-and-Privacy.md) in full.**
+
+Many configuration options have direct security and privacy consequences:
+
+- Enabling `http_instrument` + `save_content` produces extremely high volumes of sensitive data (full request/response bodies, including authentication material and PII).
+- `js_instrument` with broad or deep settings (especially logging of arguments and values) can capture tokens, emails, session data, and application secrets.
+- `cookie_instrument` records cookie values — treat output with the same sensitivity as browser cookie stores.
+- Profile-related options (`seed_tar`, `dump_profile`, `profile_archive_dir`) can contain full authentication state and browsing history.
+- Custom `prefs` can weaken or strengthen the browser's security posture (e.g., disabling security features for compatibility).
+
+**Recommendation:** Enable the smallest set of instruments and settings that answer the specific research question. Document the sensitivity classification of the resulting dataset.
+
+---
+
 ## Instruments
 
 Instruments are the core of the data collection infrastructure that OpenWPM provides.

@@ -251,16 +251,10 @@ def validate_browser_params(browser_params: BrowserParams) -> None:
 
         if browser_params.callstack_instrument:
             raise ConfigError(
-                "The callstacks instrument currently doesn't work "
-                "as it is requires intricate machinery that broke "
-                "in one of the previous Firefox versions."
-            )
-
-        if browser_params.callstack_instrument and not browser_params.js_instrument:
-            raise ConfigError(
-                "The callstacks instrument currently doesn't work without "
-                "the JS instrument enabled. see: "
-                "https://github.com/openwpm/OpenWPM/issues/557"
+                "The callstack_instrument is currently non-functional "
+                "(it has been broken since Firefox changes in prior versions). "
+                "See https://github.com/openwpm/OpenWPM/issues/557 for details and progress. "
+                "Do not enable this flag."
             )
 
         if not isinstance(browser_params.save_content, bool) and not isinstance(

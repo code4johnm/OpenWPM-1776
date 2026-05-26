@@ -1,7 +1,10 @@
-# Contributing <!-- omit in toc -->
+# Contributing
+
+**All contributors must be familiar with [docs/Security-and-Privacy.md](docs/Security-and-Privacy.md).** Changes that increase attack surface, data sensitivity, or weaken reproducibility controls will face additional scrutiny during review.
 
 - [Setting up a dev environment](#setting-up-a-dev-environment)
 - [General Hints and Guidelines](#general-hints-and-guidelines)
+  - [Security and Privacy Responsibilities](#security-and-privacy-responsibilities)
   - [Avoid failing tests for PRs caused by formatting/linting issues](#avoid-failing-tests-for-prs-caused-by-formattinglinting-issues)
   - [Types Annotations in Python](#types-annotations-in-python)
   - [Editing instrumentation](#editing-instrumentation)
@@ -9,6 +12,7 @@
   - [Managing requirements](#managing-requirements)
   - [Running tests](#running-tests)
   - [Updating schema docs](#updating-schema-docs)
+- [Documentation Contributions](#documentation-contributions)
 
 ## Setting up a dev environment
 
@@ -103,3 +107,25 @@ In the rare instance that you need to create schema docs
 from OpenWPM top level. Then run `npm run render_schema_docs`. This will update the
 `docs/schemas` folder. You may want to clean out the `docs/schemas` folder before doing this
 incase files have been renamed.
+
+## Security and Privacy Responsibilities
+
+All code and documentation changes must consider:
+
+- Impact on the privileged WebExtension attack surface
+- Sensitivity of any new data being collected (HTTP bodies, JS values, cookies, profiles, etc.)
+- Reproducibility (pinned dependencies, schema synchronization, version recording)
+- Supply-chain hygiene (no unpinned or unvetted packages)
+
+See [docs/Security-and-Privacy.md](docs/Security-and-Privacy.md), [docs/Development.md](docs/Development.md), and [SECURITY.md](SECURITY.md) for detailed expectations. Security-related contributions and reviews are especially welcome.
+
+## Documentation Contributions
+
+The project maintains a full set of professional documentation under `docs/`. When changing behavior, APIs, architecture, or security posture, update the relevant documents:
+
+- `docs/Architecture.md`
+- `docs/Security-and-Privacy.md`
+- `docs/Configuration.md`
+- `docs/Installation-Guide.md`, `Usage-Guide.md`, `Deployment.md`, `Development.md`, `Troubleshooting.md`
+
+Outdated or missing documentation is treated as a bug.

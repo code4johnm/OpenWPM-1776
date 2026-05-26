@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixes & improvements
+
+- **JS Instrumentation robustness (#1171)**: The `instrumentJS` / `instrumentObject` logic in the WebExtension now gracefully handles (and logs warnings for) cases where `eval(item.object)` or `Object.getPropertyNames(object)` throws for individual targets in a JS instrumentation collection. Previously a single failing API target would abort processing of the entire collection, causing many symbols (including common ones like `Navigator.userAgent`) to be silently un-instrumented when using custom or large `js_instrument_settings`. This makes custom fingerprinting / API collections far more reliable.
+- Cleaned up dead/unreachable `callstack_instrument` validation code in `config.py` and improved the error message with a direct link to the long-standing tracking issue (#557).
+
 ## v0.34.0 - 2026-05-07
 
 Bump to Firefox 150
