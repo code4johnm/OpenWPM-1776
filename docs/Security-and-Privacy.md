@@ -2,8 +2,8 @@
 
 **Document Version:** 1.0  
 **OpenWPM Version:** 0.34.0  
-**Last Updated:** 2025-04  
-**Workspace:** OpenWPM-MAGA  
+**Last Updated:** 2026-05-27T02:47:30Z  
+**Workspace:** OpenWPM-1776  
 **Classification:** Public (for researchers and operators)
 
 ---
@@ -22,7 +22,7 @@ This document provides:
 - Responsible disclosure and vulnerability management policy
 - Known limitations and residual risks
 
-**All operators and researchers using OpenWPM-MAGA must read this document.**
+**All operators and researchers using OpenWPM-1776 must read this document.**
 
 ---
 
@@ -306,7 +306,7 @@ A machine-readable `SECURITY.md` file exists at the repository root (see [SECURI
 
 ## 12. Conclusion
 
-OpenWPM-MAGA enables world-class web privacy research precisely because it collects data at a depth and scale that few other tools can match. That capability carries a corresponding duty of care.
+OpenWPM-1776 enables world-class web privacy research precisely because it collects data at a depth and scale that few other tools can match. That capability carries a corresponding duty of care.
 
 **Operators and researchers who follow the guidance in this document materially reduce risk to themselves, their institutions, their subjects, and the broader research community.**
 

@@ -1,7 +1,7 @@
 # Security Policy
 
-**OpenWPM / OpenWPM-MAGA**  
-**Version:** 1.0 | 2025-04
+**OpenWPM / OpenWPM-1776**  
+**Version:** 1.0 | 2026-05-27T02:47:30Z
 
 ---
 

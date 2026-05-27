@@ -1,17 +1,17 @@
-# OpenWPM-MAGA Versioning
+# OpenWPM-1776 Versioning
 
 **Document Version:** 1.0  
 **Base Upstream Version:** 0.34.0  
-**Fork Name:** OpenWPM-MAGA  
-**Last Updated:** 2025-05
+**Fork Name:** OpenWPM-1776  
+**Last Updated:** 2026-05-27T02:47:30Z
 
 ---
 
 ## Overview
 
-This document describes the versioning approach for the **OpenWPM-MAGA** fork of [OpenWPM](https://github.com/openwpm/OpenWPM).
+This document describes the versioning approach for the **OpenWPM-1776** fork of [OpenWPM](https://github.com/openwpm/OpenWPM).
 
-OpenWPM-MAGA is a maintained distribution focused on:
+OpenWPM-1776 is a maintained distribution focused on:
 - High-quality, professional documentation following industry security and research standards (OWASP, NIST CSF, SSDL).
 - Targeted robustness and reliability improvements.
 - Operational excellence for privacy measurement research.
@@ -27,12 +27,12 @@ The canonical upstream version is recorded in the root [VERSION](../VERSION) fil
 We follow a pragmatic hybrid versioning model:
 
 - **Upstream alignment**: We track the upstream major.minor version (e.g., 0.34).
-- **Fork patch / feature suffix**: When we make meaningful changes in this fork, we may append a local suffix in the form `0.34.0-maga.N` (where N is a sequential fork patch number) for releases or tagged builds.
+- **Fork patch / feature suffix**: When we make meaningful changes in this fork, we may append a local suffix in the form `0.34.0-1776.N` (where N is a sequential fork patch number) for releases or tagged builds.
 - **Documentation-driven releases**: Because a large portion of the value in this fork currently comes from documentation and process improvements, documentation updates may trigger fork patch releases even without core code changes.
 
 For day-to-day development, the root `VERSION` file continues to reflect the upstream base.
 
-## Major Changes in the OpenWPM-MAGA Fork
+## Major Changes in the OpenWPM-1776 Fork
 
 ### Documentation Overhaul (Primary Focus)
 
@@ -85,7 +85,7 @@ When preparing a release or significant update from this fork:
 1. Update the root `VERSION` file if a new fork patch version is being cut.
 2. Add a dated entry under the appropriate section in `CHANGELOG.md`.
 3. Update this `docs/version.md` file with a summary of new changes.
-4. Consider tagging with a fork-specific suffix (e.g., `v0.34.0-maga.1`).
+4. Consider tagging with a fork-specific suffix (e.g., `v0.34.0-1776.1`).
 
 ## Relationship to Upstream
 
@@ -98,4 +98,4 @@ Significant upstream changes should be evaluated for merge, with preference give
 
 ---
 
-*This document should be updated with every meaningful change or release originating from the OpenWPM-MAGA fork.*
+*This document should be updated with every meaningful change or release originating from the OpenWPM-1776 fork.*

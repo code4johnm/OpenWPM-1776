@@ -778,7 +778,11 @@ export function getInstrumentJS(eventId: string, sendMessagesToLogger) {
 
       if (targetObject !== undefined) {
         try {
-          instrumentObject(targetObject, item.instrumentedName, item.logSettings);
+          instrumentObject(
+            targetObject,
+            item.instrumentedName,
+            item.logSettings,
+          );
         } catch (e) {
           console.warn(
             `OpenWPM: instrumentObject failed for ${item.instrumentedName}`,

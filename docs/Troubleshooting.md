@@ -2,8 +2,8 @@
 
 **Document Version:** 1.0  
 **OpenWPM Version:** 0.34.0  
-**Last Updated:** 2025-04  
-**Workspace:** OpenWPM-MAGA
+**Last Updated:** 2026-05-27T02:47:30Z  
+**Workspace:** OpenWPM-1776
 
 ---
 

@@ -2,8 +2,8 @@
 
 **Document Version:** 1.0  
 **OpenWPM Version:** 0.34.0  
-**Last Updated:** 2025-04  
-**Workspace:** OpenWPM-MAGA
+**Last Updated:** 2026-05-27T04:05:00Z  
+**Workspace:** OpenWPM-1776
 
 ---
 
@@ -56,7 +56,22 @@ pytest test/test_http_instrumentation.py -v -k "test_http"
 
 ---
 
-## 3. Project Structure (Key Paths)
+## 3. Iterative Development Cycle (Build, Run, Test, Fix, Repeat)
+
+OpenWPM development follows a tight feedback loop. Always:
+
+1. **Build** — `./scripts/build-extension.sh` (or `cd Extension && npm run build`)
+2. **Run** — `python demo.py --headless` (small sites) or `python -m test.manual_test --selenium`
+3. **Test** — `pytest -m "not slow" -q`, `pytest -m pyonly`, targeted files with `-k`
+4. **Lint & Typecheck** — `pre-commit run --all-files` (covers black, isort, mypy, actionlint, etc.)
+5. **Fix** — apply auto-fixes (`npm run fix` in Extension, or editor), then repeat from step 1
+6. **Document** — update relevant `.md` files, schema docs, and this guide when behavior changes
+
+Use `datadir/` for scratch outputs (gitignored). Never commit large test fixtures changes. When browser tests are slow or environment-constrained, prioritize unit tests + `pyonly` + storage layer tests first, then full matrix on CI.
+
+---
+
+## 4. Project Structure (Key Paths)
 
 ```
 openwpm/
@@ -87,7 +102,7 @@ test/
 
 ---
 
-## 4. Making Changes
+## 5. Making Changes
 
 ### Python Changes
 
@@ -125,7 +140,7 @@ This is a significant undertaking. Typical steps:
 
 ---
 
-## 5. Dependency Management
+## 6. Dependency Management
 
 **Golden rule:** Never edit `environment.yaml` directly for new packages.
 
@@ -145,7 +160,7 @@ Firefox version updates are performed by editing `TAG` in `scripts/install-firef
 
 ---
 
-## 6. Testing Philosophy
+## 7. Testing Philosophy
 
 OpenWPM has two broad categories of tests:
 
@@ -158,7 +173,7 @@ The `test/manual_test.py` utility is invaluable for interactive debugging of ext
 
 ---
 
-## 7. Documentation
+## 8. Documentation
 
 When you change behavior visible to users or researchers, update:
 
@@ -171,7 +186,7 @@ Schema documentation under `docs/schemas/` is auto-generated in some cases (see 
 
 ---
 
-## 8. Code Review Expectations
+## 9. Code Review Expectations
 
 Reviewers will pay special attention to:
 
@@ -183,7 +198,7 @@ Reviewers will pay special attention to:
 
 ---
 
-## 9. Release Process (High Level)
+## 10. Release Process (High Level)
 
 See `docs/Release-Checklist.md` for the current checklist. Typical steps include:
 
@@ -198,7 +213,7 @@ Security-sensitive releases may require additional coordinated disclosure steps 
 
 ---
 
-## 10. Getting Help
+## 11. Getting Help
 
 - **Matrix:** `#OpenWPM:mozilla.org`
 - **GitHub Discussions:** For usage and development questions
@@ -209,7 +224,7 @@ When asking for help with a bug, include the OpenWPM version, Firefox version, e
 
 ---
 
-## 11. Contribution Checklist (PR Template Summary)
+## 12. Contribution Checklist (PR Template Summary)
 
 - [ ] Security and privacy impact considered and documented
 - [ ] Tests added or updated
