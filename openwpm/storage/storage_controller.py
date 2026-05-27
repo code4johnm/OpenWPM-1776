@@ -83,6 +83,8 @@ class StorageController:
         self.structured_storage = structured_storage
         self.unstructured_storage = unstructured_storage
         self._last_record_received: Optional[float] = None
+        self.initialized_visit_ids: set[VisitId] = set()
+        """Set of visit_ids that have been initialized"""
 
     async def _handler(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -148,8 +150,25 @@ class StorageController:
 
             visit_id = VisitId(data["visit_id"])
 
+            # Check if visit_id has been initialized (except for initialize meta messages)
+            is_initialize_meta = (
+                record_type == RECORD_TYPE_META
+                and data.get("action") == ACTION_TYPE_INITIALIZE
+            )
+            
+            if not is_initialize_meta and visit_id not in self.initialized_visit_ids:
+                self.logger.warning(
+                    "Received data for uninitialized visit_id %s. "
+                    "This may indicate a race condition or missing initialize message. "
+                    "Data will be skipped.",
+                    visit_id,
+                )
+                continue
+
             if record_type == RECORD_TYPE_META:
                 await self._handle_meta(visit_id, data)
+                if is_initialize_meta:
+                    self.initialized_visit_ids.add(visit_id)
                 continue
 
             table_name = TableName(record_type)
@@ -177,9 +196,8 @@ class StorageController:
         Supported message types:
         - finalize: A message sent by the extension to
                     signal that a visit_id is complete.
-        - initialize: TODO: Start complaining if we receive data for a visit_id
-                      before the initialize event happened.
-                      See also https://github.com/openwpm/OpenWPM/issues/846
+        - initialize: A message sent by the extension to
+                      signal that a visit_id is starting.
         """
         action: str = data["action"]
         if action == ACTION_TYPE_INITIALIZE:
