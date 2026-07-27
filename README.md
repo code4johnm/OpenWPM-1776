@@ -26,6 +26,7 @@ WebExtension.
 ## Online Bidding Overview 
 ## Key Features
 ![Online Advertising Workflow – RTB vs Header Bidding](rtb-vs-header-bidding-overview.jpg)
+
 Figure Description: Online Advertising Workflow – Real-Time Bidding (RTB) versus Header Bidding (HB)
 This diagram presents a side-by-side comparative flowchart of the programmatic online advertising auction process under the traditional Real-Time Bidding (RTB) waterfall model and the Header Bidding (HB) model. The illustration is divided into two vertical panels, with RTB on the left and HB on the right, and uses a consistent visual language of numbered process steps, directional arrows, and entity icons (server racks, browser, and specialized components).
 Legend
