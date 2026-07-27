@@ -5,12 +5,12 @@
 [![OpenWPM Matrix Channel](https://img.shields.io/matrix/OpenWPM:mozilla.org?label=Join%20us%20on%20matrix&server_fqdn=mozilla.modular.im)](https://matrix.to/#/#OpenWPM:mozilla.org?via=mozilla.org)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**OpenWPM** is a research-grade web privacy measurement platform for conducting large-scale studies (thousands to millions of websites). It is built on Firefox with Selenium automation and captures HTTP traffic, JavaScript API calls, cookies, navigation events, and DNS queries through a privileged WebExtension.
+**OpenWPM** is a research-grade web privacy measurement platform for conducting large-scale studies (thousands to millions of websites). It is built on Firefox with Selenium automation and captures HTTP traffic, JavaScript API calls, cookies, navigation events, and DNS queries through a privileged 
+WebExtension.
 
 **This is a powerful, high-privilege tool.** It collects highly sensitive data and runs with elevated browser capabilities. All users must follow responsible security and privacy practices. See [docs/Security-and-Privacy.md](docs/Security-and-Privacy.md) before running any measurement.
-
 ## Table of Contents
-
+- [Online Bidding Overview][#online-bidding]
 - [Key Features](#key-features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -23,9 +23,22 @@
 - [Contributing](#contributing)
 - [Citation](#citation)
 - [License](#license)
-
+## Online Bidding Overview 
 ## Key Features
+![Online Advertising Workflow – RTB vs Header Bidding](rtb-vs-header-bidding-overview.jpg)
+Figure Description: Online Advertising Workflow – Real-Time Bidding (RTB) versus Header Bidding (HB)
+This diagram presents a side-by-side comparative flowchart of the programmatic online advertising auction process under the traditional Real-Time Bidding (RTB) waterfall model and the Header Bidding (HB) model. The illustration is divided into two vertical panels, with RTB on the left and HB on the right, and uses a consistent visual language of numbered process steps, directional arrows, and entity icons (server racks, browser, and specialized components).
+Legend
 
+Solid green arrows denote client-side interactions that are observable within the user’s browser.
+Solid orange arrows represent server-side communications that remain invisible to the client.
+Dashed orange arrows indicate timeout or control-flow logic.
+
+Left panel – Real-Time Bidding (RTB) Waterfall
+The process begins with the browser requesting a page (step 1). The publisher’s ad server returns the page containing an ad tag (step 2). The ad tag issues a sequential ad request (step 3) that enters a classic waterfall. The request is forwarded to the first Ad Exchange (AdX) (step 4), which in turn issues a bid request to a Supply-Side Platform (SSP) (step 5) and subsequently to a Demand-Side Platform (DSP) (step 6). Bid responses travel back up the chain (steps 7–8). If the impression is not filled or falls below the publisher’s floor price, the request cascades to the next AdX in the waterfall; this sequential repetition is explicitly annotated. Only the winning ad is returned to the publisher ad server (step 9) and finally delivered to the page (step 10). The entire waterfall structure is therefore sequential and partially opaque to the browser.
+Right panel – Header Bidding (HB)
+The same initial page request occurs (step 1). Upon page load the Header Bidding wrapper executes (step 2) and simultaneously broadcasts parallel bid requests to multiple demand partners (SSP, AdX, DMP) (step 3). Bid requests continue to DSPs (steps 4–5). Bid responses are returned asynchronously (steps 6–7). Once a predetermined HB timeout expires, all collected responses are forwarded to a unified auction conducted at the publisher ad server (illustrated by a gavel, bid documents, and a star denoting the selected winner). The final ad decision is returned (step 9), optionally enriched by user-data or audience-segment information from a Data-Management Platform (DMP) (step 10), and the winning creative is delivered to the page (step 11). Because the wrapper operates client-side, every bid—not merely the winner—is visible to the browser before the unified auction occurs.Key structural contrast
+The diagram emphasizes the fundamental architectural difference: RTB relies on a sequential, tiered waterfall that conceals non-winning bids and residual inventory, whereas Header Bidding flattens the auction by soliciting simultaneous bids from multiple partners and exposing the full set of responses to the client before a single unified decision is made. The visual encoding of client-side versus server-side flows further clarifies which portions of each pipeline are observable for measurement or inference purposes.
 - **High-Fidelity Instrumentation** — Full HTTP request/response/redirect lifecycle, JavaScript property access and function calls (configurable), cookie changes, detailed navigations, and DNS.
 - **Fault-Tolerant Multi-Browser Architecture** — Isolated browser processes with automatic recovery, watchdogs, and centralized storage.
 - **Flexible Storage Backends** — SQLite (recommended for exploration), Parquet/Arrow, LevelDB, gzip, S3, and Google Cloud Storage.
