@@ -41,6 +41,29 @@ jobs:
       - name: Check Out Source Code
         uses: actions/checkout@v4
 
+      # FoD/SSC credentials are empty on this repo (FOD_TENANT/USER/PAT unset).
+      # Running the scan action without them fails with:
+      #   ERROR: Either FOD_CLIENT_ID or FOD_USER must be declared
+      - name: Check Fortify credentials
+        id: fortify_creds
+        env:
+          FOD_USER: ${{ secrets.FOD_USER }}
+          FOD_CLIENT_ID: ${{ secrets.FOD_CLIENT_ID }}
+          SSC_TOKEN: ${{ secrets.SSC_TOKEN }}
+        run: |
+          if [ -n "$FOD_USER" ] || [ -n "$FOD_CLIENT_ID" ] || [ -n "$SSC_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Fortify scan skipped"
+              echo
+              echo "No Fortify credentials in repo secrets. Set \`FOD_TENANT\`, \`FOD_USER\`, and \`FOD_PAT\`"
+              echo "(or \`FOD_CLIENT_ID\` / \`FOD_CLIENT_SECRET\`, or \`SSC_TOKEN\`) to enable scans."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Fortify credentials are not configured; skipping scan."
+          fi
+
       # Perform SAST and/or SCA scan via Fortify on Demand/Fortify Hosted/ScanCentral SAST/Debricked. Based on
       # configuration, the Fortify GitHub Action can optionally set up the application version/release, generate
       # job summaries and Pull Request comments, and/or export SAST results to the GitHub code scanning dashboard.
@@ -50,6 +73,7 @@ jobs:
       # documentation at https://github.com/fortify/github-action#readme for more information on the various
       # configuration options and available sub-actions.
       - name: Run Fortify Scan
+        if: steps.fortify_creds.outputs.configured == 'true'
         # Specify Fortify GitHub Action version to run. As per GitHub starter workflow requirements, this example
         # uses the commit id corresponding to version 1.6.2. It is recommended to check whether any later releases
         # are available at https://github.com/fortify/github-action/releases. Depending on the amount of stability

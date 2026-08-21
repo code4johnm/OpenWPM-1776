@@ -150,20 +150,26 @@ class StorageController:
 
             visit_id = VisitId(data["visit_id"])
 
-            # Check if visit_id has been initialized (except for initialize meta messages)
+            # Warn if data arrives before Initialize, but still store it.
+            # site_visits is written from Python before InitializeCommand
+            # reaches the extension, and task/crawl use INVALID_VISIT_ID
+            # with no initialize. Dropping those records emptied site_visits
+            # (and JOIN-based HTTP checks) and broke the storage unit tests.
+            # See https://github.com/openwpm/OpenWPM/issues/846
             is_initialize_meta = (
                 record_type == RECORD_TYPE_META
                 and data.get("action") == ACTION_TYPE_INITIALIZE
             )
-            
-            if not is_initialize_meta and visit_id not in self.initialized_visit_ids:
+            if (
+                not is_initialize_meta
+                and visit_id != INVALID_VISIT_ID
+                and visit_id not in self.initialized_visit_ids
+            ):
                 self.logger.warning(
                     "Received data for uninitialized visit_id %s. "
-                    "This may indicate a race condition or missing initialize message. "
-                    "Data will be skipped.",
+                    "This may indicate a race condition or missing initialize message.",
                     visit_id,
                 )
-                continue
 
             if record_type == RECORD_TYPE_META:
                 await self._handle_meta(visit_id, data)
