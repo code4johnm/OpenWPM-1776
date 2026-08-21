@@ -115,7 +115,7 @@ This document covers the OpenWPM platform code, the privileged WebExtension, bui
 
 ### 4.2 Detect
 
-- CodeQL analysis runs on every push/PR (`.github/workflows/codeql-analysis.yml`).
+- CodeQL analysis runs on every push/PR via GitHub code scanning default setup.
 - Comprehensive test suite with instrumentation-specific tests.
 - `crawl_history` table records every command status, duration, error, and traceback.
 - Watchdogs surface memory/process anomalies.
