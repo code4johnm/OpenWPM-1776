@@ -13,7 +13,7 @@ from . import utilities
 NUM_BROWSERS = 2
 
 
-@pytest.mark.usefixtures("xpi", "server")
+@pytest.mark.usefixtures("chromium_installed", "server")
 class OpenWPMTest:
     @pytest.fixture(autouse=True)
     def set_tmpdir(self, tmpdir):

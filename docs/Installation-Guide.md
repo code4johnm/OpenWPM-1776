@@ -68,7 +68,7 @@ The script will:
 1. Create or overwrite the `openwpm` conda environment
 2. Install the pinned dependencies from `environment.yaml`
 3. Download and install a compatible unbranded Firefox build into `firefox-bin/`
-4. Build the OpenWPM WebExtension (`openwpm.xpi`)
+4. Install Playwright's bundled Chromium (`python -m playwright install chromium`)
 
 **Important flags:**
 

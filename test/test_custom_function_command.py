@@ -1,12 +1,10 @@
 import sqlite3
 
-from selenium.webdriver import Firefox
-from selenium.webdriver.common.by import By
-
 from openwpm import command_sequence
+from openwpm.browser import BrowserSession, By
 from openwpm.commands.types import BaseCommand
 from openwpm.config import BrowserParams, ManagerParamsInternal
-from openwpm.socket_interface import ClientSocket
+from openwpm.instrumentation.controller import MeasurementController
 from openwpm.storage.sql_provider import SQLiteStorageProvider
 from openwpm.storage.storage_providers import TableName
 from openwpm.task_manager import TaskManager
@@ -41,10 +39,10 @@ class CollectLinksCommand(BaseCommand):
 
     def execute(
         self,
-        webdriver: Firefox,
+        webdriver: BrowserSession,
         browser_params: BrowserParams,
         manager_params: ManagerParamsInternal,
-        extension_socket: ClientSocket,
+        extension_socket: MeasurementController,
     ) -> None:
         browser_id = self.browser_id
         visit_id = self.visit_id
@@ -77,7 +75,7 @@ class CollectLinksCommand(BaseCommand):
         sock.close()
 
 
-def test_custom_function(default_params, xpi, server):
+def test_custom_function(default_params, chromium_installed, server):
     """Test `custom_function` with an inline func that collects links"""
     table_name = TableName("page_links")
 

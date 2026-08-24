@@ -4,13 +4,13 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-OpenWPM is a web privacy measurement framework for conducting large-scale privacy studies (thousands to millions of websites). Built on Firefox with Selenium automation, it captures HTTP traffic, JavaScript API calls, cookies, navigation, and DNS queries through a privileged WebExtension.
+OpenWPM is a web privacy measurement framework for conducting large-scale privacy studies (thousands to millions of websites). Built on Playwright Chromium, it captures HTTP traffic, JavaScript API calls, cookies, navigation, and DNS queries through Playwright events and CDP.
 
 ## Build & Development Commands
 
 ### Initial Setup
 ```bash
-./install.sh  # Creates conda env, installs Firefox, builds extension
+./install.sh  # Creates conda env, installs Playwright Chromium
 ```
 
 ### Running Tests
@@ -39,17 +39,9 @@ isort .                      # Sort imports
 mypy openwpm                 # Type checking
 ```
 
-**Extension (from Extension/ directory):**
+**Smoke:**
 ```bash
-npm run lint    # ESLint + Prettier + web-ext lint
-npm run fix     # Auto-fix issues
-npm run build   # Rebuild extension (TypeScript → webpack → web-ext)
-```
-
-### Rebuilding Extension
-```bash
-scripts/build-extension.sh
-# Or from Extension/: npm run build
+python -m openwpm.smoke
 ```
 
 ### Updating Dependencies
@@ -62,7 +54,7 @@ scripts/repin.sh  # Don't edit environment.yaml directly
 ```
 TaskManager (orchestrator)
 ├── BrowserManagerHandle[] → BrowserManager (per-browser process)
-│                              └── Selenium WebDriver → Firefox + WebExtension
+│                              └── Playwright → Chromium + CDP/JS inject
 └── StorageController (isolated process)
     ├── StructuredStorageProvider (SQLite/Parquet/S3/GCS)
     └── UnstructuredStorageProvider (LevelDB/Gzip/S3/GCS)
@@ -71,8 +63,8 @@ TaskManager (orchestrator)
 ### Core Components
 
 - **TaskManager** (`openwpm/task_manager.py`): Orchestrates browsers, manages command queues, runs watchdogs for crash recovery
-- **BrowserManager** (`openwpm/browser_manager.py`): Wraps Selenium, executes commands, handles browser lifecycle
-- **WebExtension** (`Extension/src/`): TypeScript extension collecting HTTP, cookies, JS calls, navigation via privileged browser APIs
+- **BrowserManager** (`openwpm/browser_manager.py`): Wraps Playwright Chromium, executes commands, handles browser lifecycle
+- **Instrumentation** (`openwpm/instrumentation/`): Playwright/CDP capture of HTTP, cookies, JS, navigation, DNS
 - **Storage System** (`openwpm/storage/`): Receives data from extension via sockets, writes to configured backends
 - **Commands** (`openwpm/commands/`): Extend `BaseCommand` with `execute()` method
 
@@ -111,10 +103,10 @@ When creating releases, PRs, or interacting with GitHub, prefer using the `gh` C
 
 - `demo.py`: Reference implementation showing typical usage
 - `custom_command.py`: Example of custom command implementation
-- `test/manual_test.py`: Interactive debugging (`python -m test.manual_test --selenium`)
+- `test/manual_test.py`: Interactive debugging (`python -m test.manual_test`)
 
 ## Display Modes
 
 - `native`: GUI visible (default)
-- `headless`: Firefox headless (no X server needed)
+- `headless`: Chromium headless (no X server needed)
 - `xvfb`: X virtual framebuffer (full browser, no GUI, for servers)

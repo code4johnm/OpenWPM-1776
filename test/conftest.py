@@ -1,6 +1,5 @@
 import logging
 import os
-import subprocess
 from pathlib import Path
 from typing import Any, Callable, Generator, List, Literal, Protocol, Tuple, TypeAlias
 
@@ -14,11 +13,6 @@ from openwpm.task_manager import TaskManager
 from . import utilities
 from .openwpmtest import NUM_BROWSERS
 
-EXTENSION_DIR = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)),
-    "..",
-    "Extension",
-)
 pytest_plugins = "test.storage.fixtures"
 
 
@@ -39,15 +33,11 @@ def enable_subprocess_coverage():
         pass
 
 
-def xpi():
-    # Creates a new xpi using npm run build.
-    print("Building new xpi")
-    subprocess.check_call(["npm", "run", "build"], cwd=EXTENSION_DIR)
+@pytest.fixture(scope="session", autouse=True)
+def chromium_installed():
+    from openwpm.browser_bin import require_chromium
 
-
-@pytest.fixture(name="xpi", scope="session")
-def xpi_fixture():
-    return xpi()
+    require_chromium()
 
 
 @pytest.fixture(scope="session")
@@ -85,7 +75,7 @@ TaskManagerCreator: TypeAlias = Callable[[FullConfig], Tuple[TaskManager, Path]]
 
 
 @pytest.fixture()
-def task_manager_creator(server: None, xpi: None) -> TaskManagerCreator:
+def task_manager_creator(server: None, chromium_installed: None) -> TaskManagerCreator:
     """We create a callable that returns a TaskManager that has
     been configured with the Manager and BrowserParams"""
 

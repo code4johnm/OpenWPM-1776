@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
-
-from selenium.webdriver import Firefox
+from typing import TYPE_CHECKING, Any
 
 from ..config import BrowserParamsInternal, ManagerParamsInternal
-from ..socket_interface import ClientSocket
+
+if TYPE_CHECKING:
+    from ..browser import BrowserSession
+    from ..instrumentation.controller import MeasurementController
 
 
 class BaseCommand(ABC):
@@ -15,6 +17,10 @@ class BaseCommand(ABC):
     all commands that are already implemented
     """
 
+    visit_id: Any
+    browser_id: Any
+    start_time: float
+
     def set_visit_browser_id(self, visit_id, browser_id):
         self.visit_id = visit_id
         self.browser_id = browser_id
@@ -25,23 +31,20 @@ class BaseCommand(ABC):
     @abstractmethod
     def execute(
         self,
-        webdriver: Firefox,
+        webdriver: "BrowserSession",
         browser_params: BrowserParamsInternal,
         manager_params: ManagerParamsInternal,
-        extension_socket: ClientSocket,
+        extension_socket: "MeasurementController",
     ) -> None:
         """This method gets called in the Browser process
 
-        :parameter webdriver: WebDriver is a Selenium class used to control
-            browser. You can simulate arbitrary interactions and extract almost
-            all browser state with the tools that Selenium gives you
+        :parameter webdriver: BrowserSession wrapping Playwright Chromium
+            (``webdriver.page`` / ``webdriver.context`` are the raw APIs).
         :parameter browser_params: Contains the per browser configuration
             E.g. which instruments are enabled
         :parameter manager_params: Per crawl parameters E.g. where to store files
-        :parameter extension_socket: Communication channel to the storage provider
-
-            TODO: Further document this once the StorageProvider PR has landed
-            This allows you to send data to be persisted to storage.
+        :parameter extension_socket: Measurement controller (Initialize/Finalize
+            plus storage). Named for historical command compatibility.
         """
         pass
 

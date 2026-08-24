@@ -1,13 +1,11 @@
-"""Update all OpenWPM dependencies and check for a newer Firefox release.
+"""Update OpenWPM dependencies.
 
 Steps
 -----
 1. Repin the conda environment (scripts/repin.sh)
 2. Sync pre-commit linter revs to the freshly pinned conda env
 3. Update root npm dependencies to latest, resolving peer dep conflicts
-4. Update Extension npm dependencies to latest, resolving peer dep conflicts
-5. Rebuild the extension
-6. Check hg.mozilla.org for a newer Firefox and update install-firefox.sh if found
+4. Remind the operator to bump playwright and reinstall Chromium
 
 Run from the project root:
     python scripts/update.py
@@ -349,24 +347,17 @@ def main() -> None:
     # Sync pre-commit linter versions to match the freshly pinned conda env
     sync_precommit_linter_versions()
 
-    # Sync Extension's engines.node to match the freshly pinned conda env
-    sync_extension_node_engine()
-
     # Catch silent VERSION drift relative to the latest release tag
     bump_version_if_behind()
 
     # Bump npm deps to latest and resolve peer dep conflicts
     npm_bump_and_resolve(ROOT)
-    npm_bump_and_resolve(ROOT / "Extension")
 
-    # Rebuild the extension XPI after dependency changes
-    run(str(SCRIPTS / "build-extension.sh"))
-
-    # Check for a newer Firefox release and update install-firefox.sh if available
-    sys.path.insert(0, str(SCRIPTS))
-    import firefox_version
-
-    firefox_version.update_if_needed()
+    print(
+        "\nRemember: playwright is pinned in environment.yaml. "
+        "After bumping it, run ./scripts/install-chromium.sh "
+        "and update the Chromium version in README/CHANGELOG."
+    )
 
 
 if __name__ == "__main__":

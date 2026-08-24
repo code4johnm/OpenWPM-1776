@@ -1,4 +1,3 @@
-import errno
 import json
 import logging
 import os
@@ -16,18 +15,16 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type, Union
 
 import psutil
 from multiprocess import Queue
-from selenium.common.exceptions import WebDriverException
 from tblib import Traceback, pickling_support
 
+from .browser import BrowserError, NetError  # no Playwright import here
 from .command_sequence import CommandSequence
 from .commands.browser_commands import FinalizeCommand
 from .commands.profile_commands import dump_profile
 from .commands.types import BaseCommand, ShutdownSignal
-from .commands.utils.webdriver_utils import parse_neterror
 from .config import BrowserParamsInternal, ManagerParamsInternal
-from .deploy_browsers import deploy_firefox
 from .errors import BrowserConfigError, BrowserCrashError, ProfileLoadError
-from .socket_interface import ClientSocket
+from .instrumentation.neterror import parse_neterror
 from .storage.storage_providers import TableName
 from .types import BrowserId, VisitId
 from .utilities.multiprocess_utils import (
@@ -95,8 +92,8 @@ class BrowserManagerHandle:
         """queue for passing command objects to BrowserManager"""
         self.status_queue: Optional[Queue] = None
         """queue for receiving command execution status from BrowserManager"""
-        self.geckodriver_pid: Optional[int] = None
-        """pid for browser instance controlled by BrowserManager"""
+        self.browser_pid: Optional[int] = None
+        """pid for the Chromium process controlled by BrowserManager"""
         self.display_pid: Optional[int] = None
         """the pid of the display for the Xvfb display (if it exists)"""
         self.display_port: Optional[int] = None
@@ -197,7 +194,7 @@ class BrowserManagerHandle:
                 # 4. Browser launch attempted
                 check_queue(launch_status)
                 # 5. Browser launched
-                self.geckodriver_pid = check_queue(launch_status)
+                self.browser_pid = check_queue(launch_status)
 
                 ready = check_queue(launch_status)
                 if ready != "READY":
@@ -572,7 +569,7 @@ class BrowserManagerHandle:
                 "Browser PID: %s",
                 self.browser_id,
                 self.browser_manager.pid,
-                self.geckodriver_pid,
+                self.browser_pid,
             )
             try:
                 os.kill(self.browser_manager.pid, signal.SIGKILL)
@@ -613,19 +610,16 @@ class BrowserManagerHandle:
                 )
                 pass
 
-        if self.geckodriver_pid is not None:
-            """`geckodriver_pid` is the geckodriver process. We first kill
-            the child processes (i.e. firefox) and then kill the geckodriver
-            process."""
+        if self.browser_pid is not None:
             try:
-                geckodriver_process = psutil.Process(pid=self.geckodriver_pid)
+                browser_process = psutil.Process(pid=self.browser_pid)
             except psutil.NoSuchProcess:
                 self.logger.debug(
-                    "BROWSER %i: geckodriver process with pid %i has already"
-                    " exited" % (self.browser_id, self.geckodriver_pid)
+                    "BROWSER %i: Chromium process with pid %i has already"
+                    " exited" % (self.browser_id, self.browser_pid)
                 )
                 return
-            kill_process_and_children(geckodriver_process, self.logger)
+            kill_process_and_children(browser_process, self.logger)
 
     def shutdown_browser(self, during_init: bool, force: bool = False) -> None:
         """Runs the closing tasks for this Browser/BrowserManager"""
@@ -666,8 +660,8 @@ class BrowserManager(Process):
     The BrowserManager function runs in each new browser process.
     It is responsible for listening to command instructions from
     the Task Manager and passing them to the command module to execute
-    and interface with Selenium. Command execution status is sent back
-    to the TaskManager.
+    and interface with Playwright Chromium. Command execution status is
+    sent back to the TaskManager.
     """
 
     def __init__(
@@ -693,86 +687,37 @@ class BrowserManager(Process):
         if self.manager_params.testing:
             self.critical_exceptions += (AssertionError,)
 
-    def _start_extension(self, browser_profile_path: Path) -> ClientSocket:
-        """Start up the extension
-        Blocks until the extension has fully started up
-        """
-        assert self.browser_params.browser_id is not None
-        self.logger.debug(
-            "BROWSER %i: Looking for extension port information "
-            "in %s" % (self.browser_params.browser_id, browser_profile_path)
-        )
-        elapsed = 0.0
-        port = None
-        ep_filename = browser_profile_path / "extension_port.txt"
-        while elapsed < 5:
-            try:
-                with open(ep_filename, "rt") as f:
-                    port = int(f.read().strip())
-                    break
-            except IOError as e:
-                if e.errno != errno.ENOENT:
-                    raise
-            time.sleep(0.1)
-            elapsed += 0.1
-        if port is None:
-            # try one last time, allowing all exceptions to propagate
-            with open(ep_filename, "rt") as f:
-                port = int(f.read().strip())
-
-        ep_filename.unlink()
-        self.logger.debug(
-            "BROWSER %i: Connecting to extension on port %i"
-            % (self.browser_params.browser_id, port)
-        )
-        extension_socket = ClientSocket(serialization="json")
-        extension_socket.connect("127.0.0.1", int(port))
-
-        success_filename = browser_profile_path / "OPENWPM_STARTUP_SUCCESS.txt"
-        startup_successful = False
-        while elapsed < 10:
-            if success_filename.exists():
-                startup_successful = True
-                break
-            time.sleep(0.1)
-            elapsed += 0.1
-
-        if not startup_successful:
-            self.logger.error(
-                "BROWSER %i: Failed to complete extension startup in time",
-                self.browser_params.browser_id,
-            )
-            raise BrowserConfigError("The extension did not boot up in time")
-        success_filename.unlink()
-        return extension_socket
-
     def run_impl(self) -> None:
         assert self.browser_params.browser_id is not None
         display = None
+        controller: Optional[MeasurementController] = None
 
         try:
-            # Start Xvfb (if necessary), webdriver, and browser
-            driver, browser_profile_path, display = deploy_firefox.deploy_firefox(
+            # Import in the child only — Playwright must not be imported in the
+            # parent before fork().
+            from .deploy_browsers.deploy_chromium import deploy_chromium
+            from .instrumentation import MeasurementController
+
+            session, browser_profile_path, display = deploy_chromium(
                 self.status_queue,
                 self.browser_params,
                 self.manager_params,
                 self.crash_recovery,
             )
 
-            extension_socket = self._start_extension(browser_profile_path)
+            controller = MeasurementController(
+                session, self.browser_params, self.manager_params
+            )
+            controller.attach()
 
             self.logger.debug(
                 "BROWSER %i: BrowserManager ready." % self.browser_params.browser_id
             )
 
-            # passes "READY" to the TaskManager to signal a successful startup
             self.status_queue.put(("STATUS", "Browser Ready", "READY"))
             self.browser_params.profile_path = browser_profile_path
 
-            assert extension_socket is not None
-            # starts accepting arguments until told to die
             while True:
-                # no command for now -> sleep to avoid pegging CPU on blocking get
                 if self.command_queue.empty():
                     time.sleep(0.001)
                     continue
@@ -780,7 +725,9 @@ class BrowserManager(Process):
                 command: Union[ShutdownSignal, BaseCommand] = self.command_queue.get()
 
                 if isinstance(command, ShutdownSignal):
-                    driver.quit()
+                    if controller is not None:
+                        controller.close()
+                    session.quit()
                     self.status_queue.put("OK")
                     return
 
@@ -790,31 +737,23 @@ class BrowserManager(Process):
                     % (self.browser_params.browser_id, str(command))
                 )
 
-                # attempts to perform an action and return an OK signal
-                # if command fails for whatever reason, tell the TaskManager to
-                # kill and restart its worker processes
                 try:
                     command.execute(
-                        driver,
+                        session,
                         self.browser_params,
                         self.manager_params,
-                        extension_socket,
+                        controller,
                     )
                     self.status_queue.put("OK")
-                except WebDriverException:
-                    # We handle WebDriverExceptions separately here because they
-                    # are quite common, and we often still have a handle to the
-                    # browser, allowing us to run the SHUTDOWN command.
+                except NetError:
+                    self.status_queue.put(("NETERROR", pickle.dumps(sys.exc_info())))
+                    continue
+                except BrowserError:
                     tb = traceback.format_exception(*sys.exc_info())
-                    if "about:neterror" in tb[-1]:
-                        self.status_queue.put(
-                            ("NETERROR", pickle.dumps(sys.exc_info()))
-                        )
-                        continue
                     extra = parse_traceback_for_sentry(tb)
                     extra["exception"] = tb[-1]
                     self.logger.error(
-                        "BROWSER %i: WebDriverException while executing command"
+                        "BROWSER %i: BrowserError while executing command"
                         % self.browser_params.browser_id,
                         exc_info=True,
                         extra=extra,
@@ -833,11 +772,16 @@ class BrowserManager(Process):
             extra["exception"] = tb[-1]
             self.logger.error(
                 "BROWSER %i: Crash in driver, restarting browser manager"
-                % self.browser_params.browser_id,
+                % (self.browser_params.browser_id),
                 exc_info=True,
                 extra=extra,
             )
             self.status_queue.put(("FAILED", pickle.dumps(sys.exc_info())))
         finally:
+            if controller is not None:
+                try:
+                    controller.close()
+                except Exception:
+                    pass
             if display is not None:
                 display.stop()

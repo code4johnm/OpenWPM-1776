@@ -36,7 +36,7 @@ Before diving into specific errors, verify the following:
   cd firefox-bin/
   ./firefox --version
   ```
-- Are Selenium and geckodriver versions compatible with the installed Firefox? Re-run `./install.sh`.
+- Is Playwright Chromium installed? Run `python -m playwright install chromium` or `./scripts/install-chromium.sh`.
 
 **Other causes:**
 - Overloaded system (CPU/memory). Reduce `num_browsers`.

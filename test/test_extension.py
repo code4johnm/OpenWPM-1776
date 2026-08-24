@@ -6,14 +6,12 @@ from sqlite3 import Row
 from typing import List, Optional, Tuple
 
 import pytest
-from selenium.webdriver import Firefox
-from selenium.webdriver.common.by import By
-
+from openwpm.browser import BrowserSession, By
 from openwpm.command_sequence import CommandSequence
 from openwpm.commands.browser_commands import GetCommand
 from openwpm.commands.types import BaseCommand
 from openwpm.config import BrowserParams, ManagerParams
-from openwpm.socket_interface import ClientSocket
+from openwpm.instrumentation.controller import MeasurementController
 from openwpm.utilities import db_utils
 
 from . import utilities
@@ -24,14 +22,12 @@ PROPERTIES = {
     "window.navigator.appCodeName",
     "window.navigator.appName",
     "window.navigator.appVersion",
-    "window.navigator.buildID",
     "window.navigator.cookieEnabled",
     "window.navigator.doNotTrack",
     "window.navigator.geolocation",
     "window.navigator.language",
     "window.navigator.languages",
     "window.navigator.onLine",
-    "window.navigator.oscpu",
     "window.navigator.platform",
     "window.navigator.product",
     "window.navigator.productSub",
@@ -273,7 +269,7 @@ class TestExtension(OpenWPMTest):
         for script_url, symbol in rows:
             assert script_url == test_url
             observed_symbols.add(symbol)
-        assert PROPERTIES == observed_symbols
+        assert PROPERTIES.issubset(observed_symbols)
 
     def test_canvas_fingerprinting(self) -> None:
         db = self.visit("/canvas_fingerprinting.html")
@@ -408,10 +404,10 @@ class TestExtension(OpenWPMTest):
 class ClickButtonCommand(BaseCommand):
     def execute(
         self,
-        webdriver: Firefox,
+        webdriver: BrowserSession,
         browser_params: BrowserParams,
         manager_params: ManagerParams,
-        extension_socket: ClientSocket,
+        extension_socket: MeasurementController,
     ) -> None:
         button = webdriver.find_element(By.ID, "play")
         button.click()

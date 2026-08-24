@@ -47,11 +47,9 @@ fi
 echo 'Activating environment.'
 conda activate openwpm
 
-echo 'Installing firefox.'
-./scripts/install-firefox.sh
-
-echo 'Building extension.'
-./scripts/build-extension.sh
+echo 'Installing Playwright Chromium.'
+chmod +x ./scripts/install-chromium.sh
+./scripts/install-chromium.sh
 
 echo 'Installation complete, activate your new environment by running:'
 echo 'conda activate openwpm'

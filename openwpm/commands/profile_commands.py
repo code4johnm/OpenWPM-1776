@@ -2,16 +2,20 @@ import logging
 import tarfile
 from pathlib import Path
 
-from selenium.webdriver import Firefox
-
 from openwpm.config import BrowserParamsInternal, ManagerParamsInternal
 
+from ..browser import BrowserSession
 from ..errors import ProfileLoadError
-from ..socket_interface import ClientSocket
 from .types import BaseCommand
 from .utils.firefox_profile import sleep_until_sqlite_checkpoint
 
 logger = logging.getLogger("openwpm")
+
+# Chromium persistent-context markers. Cookies/History appear after first use.
+REQUIRED_PROFILE_ITEMS = [
+    "Default/Preferences",
+    "Local State",
+]
 
 
 def dump_profile(
@@ -20,23 +24,14 @@ def dump_profile(
     compress: bool,
     browser_params: BrowserParamsInternal,
 ) -> None:
-    """Dumps a browser profile to a tar file.
-
-    Should only be called when the browser is closed, to prevent
-    database corruption in the archived profile (see section 1.2
-    of https://www.sqlite.org/howtocorrupt.html).
-    """
+    """Dump a Chromium user-data-dir to a tar file. Call with the browser closed."""
     assert browser_params.browser_id is not None
 
-    # Creating the folders if need be
     tar_path.parent.mkdir(exist_ok=True, parents=True)
 
-    # see if this file exists first
-    # if it does, delete it before we try to save the current session
     if tar_path.exists():
         tar_path.unlink()
 
-    # backup and tar profile
     if compress:
         tar = tarfile.open(tar_path, "w:gz", errorlevel=1)
     else:
@@ -50,13 +45,10 @@ def dump_profile(
     archived_items = tar.getnames()
     tar.close()
 
-    required_items = [
-        "cookies.sqlite",  # cookies
-        "places.sqlite",  # history
-        "storage.sqlite",  # localStorage
-    ]
-    for item in required_items:
-        if item not in archived_items:
+    for item in REQUIRED_PROFILE_ITEMS:
+        if item not in archived_items and not any(
+            name == item or name.startswith(item + "/") for name in archived_items
+        ):
             logger.critical(
                 "BROWSER %i: %s NOT FOUND IN profile folder"
                 % (browser_params.browser_id, item)
@@ -65,11 +57,6 @@ def dump_profile(
 
 
 class DumpProfileCommand(BaseCommand):
-    """
-    Dumps a browser profile currently stored in <browser_params.profile_path> to
-    <tar_path>.
-    """
-
     def __init__(
         self, tar_path: Path, close_webdriver: bool, compress: bool = True
     ) -> None:
@@ -84,14 +71,13 @@ class DumpProfileCommand(BaseCommand):
 
     def execute(
         self,
-        webdriver: Firefox,
+        webdriver: BrowserSession,
         browser_params: BrowserParamsInternal,
         manager_params: ManagerParamsInternal,
-        extension_socket: ClientSocket,
+        extension_socket,
     ) -> None:
-        # if this is a dump on close, close the webdriver and wait for checkpoint
         if self.close_webdriver:
-            webdriver.close()
+            webdriver.close_context()
             sleep_until_sqlite_checkpoint(browser_params.profile_path)
 
         assert browser_params.profile_path is not None
@@ -108,14 +94,9 @@ def load_profile(
     browser_params: BrowserParamsInternal,
     tar_path: Path,
 ) -> None:
-    """
-    Loads a zipped cookie-based profile stored at <tar_path> and unzips
-    it to <browser_profile_path>. The tar will remain unmodified.
-    """
     assert browser_params.browser_id is not None
     try:
         assert tar_path.is_file()
-        # Untar the loaded profile
         if tar_path.name.endswith("tar.gz"):
             f = tarfile.open(tar_path, "r:gz", errorlevel=1)
         else:

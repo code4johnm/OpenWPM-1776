@@ -10,26 +10,26 @@ RUN apt-get clean -qq \
     && apt-get clean -qq \
     && apt-get update -qq \
     && apt-get upgrade -qq \
-    # git and make for `npm install`, wget for `install-conda`
+    # git and make, wget for `install-conda`
     && apt-get install wget git make -qq \
-    # deps to run firefox inc. with xvfb
-    && apt-get install firefox xvfb libgtk-3-dev libasound2 libdbus-glib-1-2 libpci3 -qq
+    # Chromium + xvfb runtime deps
+    && apt-get install -qq xvfb libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+       libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+       libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 libgtk-3-0 fonts-liberation
 
 ENV HOME /opt
 COPY scripts/install-conda.sh .
 RUN ./install-conda.sh
 ENV PATH $HOME/conda/bin:$PATH
 
-# Install OpenWPM
+# Install OpenWPM. Playwright browsers live outside a bind-mounted source tree.
+ENV PLAYWRIGHT_BROWSERS_PATH /opt/ms-playwright
 WORKDIR /opt/OpenWPM
 COPY . .
 RUN ./install.sh
 ENV PATH $HOME/conda/envs/openwpm/bin:$PATH
-
-# Move the firefox binary away from the /opt/OpenWPM root so that it is available if
-# we mount a local source code directory as /opt/OpenWPM
-RUN mv firefox-bin /opt/firefox-bin
-ENV FIREFOX_BINARY /opt/firefox-bin/firefox-bin
+ENV OPENWPM_NO_SANDBOX 1
+ENV OPENWPM_DISABLE_DEV_SHM 1
 
 # Setting demo.py as the default command
 CMD [ "python", "demo.py"]

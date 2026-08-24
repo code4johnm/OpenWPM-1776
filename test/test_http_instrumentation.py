@@ -935,7 +935,7 @@ def test_page_visit(
     assert HTTP_REDIRECTS == observed_redirects
 
 
-def test_javascript_saving(http_params, xpi, server):
+def test_javascript_saving(http_params, chromium_installed, server):
     """check that javascript content is saved and hashed correctly"""
     test_url = utilities.BASE_TEST_URL + "/http_test_page.html"
     manager_params, browser_params = http_params()
@@ -967,7 +967,7 @@ def test_javascript_saving(http_params, xpi, server):
     assert len(expected_hashes) == 0  # All expected hashes have been seen
 
 
-def test_document_saving(http_params, xpi, server):
+def test_document_saving(http_params, chromium_installed, server):
     """check that document content is saved and hashed correctly"""
     test_url = utilities.BASE_TEST_URL + "/http_test_page.html"
     expected_hashes = {
@@ -999,7 +999,7 @@ def test_document_saving(http_params, xpi, server):
     assert len(expected_hashes) == 0  # All expected hashes have been seen
 
 
-def test_content_saving(http_params, xpi, server):
+def test_content_saving(http_params, chromium_installed, server):
     """check that content is saved and hashed correctly"""
     test_url = utilities.BASE_TEST_URL + "/http_test_page.html"
     manager_params, browser_params = http_params()

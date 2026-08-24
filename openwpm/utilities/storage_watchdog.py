@@ -33,8 +33,7 @@ def total_folder_size(startup: bool = False, root_dir: str = "/tmp") -> str:
         for dirpath, dirnames, filenames in os.walk(root_dir):
             for file in filenames:
                 if (
-                    "firefox" in file
-                    or ".xpi" in file
+                    "chrom" in file
                     or "owpm" in file
                     or "Temp" in file
                 ):

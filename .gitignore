@@ -10,11 +10,14 @@ docker-volume/
 # mypy
 .mypy_cache
 
-# firefox directories
+# firefox directories (legacy; no longer used)
 firefox-bin/
 Firefox*.app/
 Nightly*.app/
 firefox-profile
+
+# Playwright Chromium download
+ms-playwright/
 
 # VIM tmp files
 *~

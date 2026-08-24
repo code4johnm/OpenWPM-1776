@@ -20,7 +20,7 @@ expected_js_cookie = (
     "test_cookie",  # name
     "/",  # path
     "Test-0123456789",  # value
-    "unspecified",  # same_site
+    "lax",  # same_site (Chromium SameSite-by-default)
 )
 
 

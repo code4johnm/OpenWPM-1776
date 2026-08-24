@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- **Chromium via Playwright is the only browser engine.** Selenium, geckodriver,
+  the unbranded Firefox build, and the privileged Firefox WebExtension are
+  removed. Required browser: Playwright **1.62.0** bundled Chromium
+  **151.0.7922.34**. See `MIGRATION.md`.
+- `BrowserParams.browser` default is `"chromium"`. `"firefox"` is rejected.
+- `BrowserParams.prefs` is ignored; use `launch_args` for extra Chromium flags.
+- `FIREFOX_BINARY` is gone; use `OPENWPM_CHROMIUM_EXECUTABLE` only as an
+  override. Install binaries with `python -m playwright install chromium`.
+- Custom commands receive a Playwright `BrowserSession` instead of a Selenium
+  Firefox driver. Import `By` from `openwpm.browser`.
+- Profiles are Chromium user-data-dirs. Firefox `profile.tar.gz` fixtures and
+  `places.sqlite` / `cookies.sqlite` layout no longer apply.
+- JS instrumentation uses a page-world inject script and V8 stack traces.
+
+### Removed
+
+- `openwpm/deploy_browsers/deploy_firefox.py`, `configure_firefox.py`, `selenium_firefox.py`
+- `scripts/install-firefox.sh`, `scripts/firefox_version.py`, `scripts/build-extension.sh`
+- The `Extension/` WebExtension (HTTP/cookie/nav/DNS/JS via privileged APIs)
+- conda packages `selenium` and `geckodriver`
+
+### Added
+
+- `python -m openwpm.smoke` — fail-closed if Chromium is missing; opens
+  example.com; writes `datadir/smoke.png` and `datadir/smoke.har`.
+- CI job `smoke` plus Playwright browser cache.
+- `BrowserParams.launch_args`, `locale`, `timezone_id`.
+
 ### Fixes & improvements
 
 - **JS Instrumentation robustness (#1171)**: The `instrumentJS` / `instrumentObject` logic in the WebExtension now gracefully handles (and logs warnings for) cases where `eval(item.object)` or `Object.getPropertyNames(object)` throws for individual targets in a JS instrumentation collection. Previously a single failing API target would abort processing of the entire collection, causing many symbols (including common ones like `Navigator.userAgent`) to be silently un-instrumented when using custom or large `js_instrument_settings`. This makes custom fingerprinting / API collections far more reliable.

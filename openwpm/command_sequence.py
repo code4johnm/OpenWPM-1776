@@ -112,24 +112,7 @@ class CommandSequence:
         self._commands_with_timeout.append((command, timeout))
 
     def screenshot_full_page(self, suffix="", timeout=30):
-        """Save a screenshot of the entire page.
-
-        NOTE: geckodriver v0.15 only supports viewport screenshots. To
-        screenshot the entire page we scroll the page using javascript and take
-        a viewport screenshot at each location. This method will save the
-        parts and a stitched version in the `screenshot_path`. We only scroll
-        vertically, so pages that are wider than the viewport will be clipped.
-        See: https://github.com/mozilla/geckodriver/issues/570
-
-        The screenshot produced will only include the area originally
-        loaded at the start of the command. Sites which dynamically expand as
-        the page is scrolled (i.e. infinite scroll) will only go as far as the
-        original height.
-
-        NOTE: In geckodriver v0.15 doing any scrolling (or having devtools
-        open) seems to break element-only screenshots. So using this command
-        will cause any future element-only screenshots to be mis-aligned
-        """
+        """Save a screenshot of the entire page via Playwright full_page capture."""
         self.total_timeout += timeout
         if not self.contains_get_or_browse:
             raise CommandExecutionError(

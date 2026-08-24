@@ -32,7 +32,7 @@ def test_browser_type():
     with pytest.raises(ConfigError):
         validate_browser_params(browser_params)
 
-    browser_params.browser = "firefox"
+    browser_params.browser = "chromium"
     validate_browser_params(browser_params)
 
 

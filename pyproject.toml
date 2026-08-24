@@ -13,7 +13,7 @@ profile = "black"
 known_future_library = "future"
 known_first_party = ["openwpm", "openwpmtest", "test"]
 default_section = "THIRDPARTY"
-skip = ["venv", "Extension", "firefox-bin"]
+skip = ["venv", "ms-playwright", "firefox-bin"]
 
 [tool.mypy]
 follow_imports = "silent"

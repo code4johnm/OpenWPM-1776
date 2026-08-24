@@ -43,7 +43,7 @@ The instrumentation extension is included in `/Extension/`.
 The instrumentation itself (used by the above extension) is included in
 `/Extension/webext-instrumentation/`.
 Any edits within these directories will require the extension to be re-built to produce
-a new `openwpm.xpi` with your updates. You can use `./scripts/build-extension.sh` to do this,
+Chromium via Playwright. You can use `./scripts/install-chromium.sh` to (re)install the pinned browser,
 or you can run `npm run build` from `/Extension/`.
 
 ### Debugging the platform
@@ -60,7 +60,7 @@ instance (without any instrumentation)
 - `./scripts/build-extension.sh`
 - `python -m test.manual_test` builds the current extension directory
   and launches a Firefox instance with it.
-- `python -m test.manual_test --selenium` launches a Firefox Selenium instance
+- `python -m test.manual_test` launches a Playwright Chromium instance
   after automatically rebuilding `openwpm.xpi`. The script then
   drops into an `ipython` shell where the webdriver instance is available
   through variable `driver`.

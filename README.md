@@ -5,8 +5,7 @@
 [![OpenWPM Matrix Channel](https://img.shields.io/matrix/OpenWPM:mozilla.org?label=Join%20us%20on%20matrix&server_fqdn=mozilla.modular.im)](https://matrix.to/#/#OpenWPM:mozilla.org?via=mozilla.org)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**OpenWPM** is a research-grade web privacy measurement platform for conducting large-scale studies (thousands to millions of websites). It is built on Firefox with Selenium automation and captures HTTP traffic, JavaScript API calls, cookies, navigation events, and DNS queries through a privileged 
-WebExtension.
+**OpenWPM** is a web privacy measurement platform for conducting large-scale studies (thousands to millions of websites). It is built on **Playwright + Chromium** and captures HTTP traffic, JavaScript API calls, cookies, navigation events, and DNS queries through Playwright events and CDP.
 
 **This is a powerful, high-privilege tool.** It collects highly sensitive data and runs with elevated browser capabilities. All users must follow responsible security and privacy practices. See [docs/Security-and-Privacy.md](docs/Security-and-Privacy.md) before running any measurement.
 ## Table of Contents
@@ -43,7 +42,7 @@ The diagram emphasizes the fundamental architectural difference: RTB relies on a
 - **High-Fidelity Instrumentation** — Full HTTP request/response/redirect lifecycle, JavaScript property access and function calls (configurable), cookie changes, detailed navigations, and DNS.
 - **Fault-Tolerant Multi-Browser Architecture** — Isolated browser processes with automatic recovery, watchdogs, and centralized storage.
 - **Flexible Storage Backends** — SQLite (recommended for exploration), Parquet/Arrow, LevelDB, gzip, S3, and Google Cloud Storage.
-- **Reproducible by Design** — Full configuration snapshots, pinned dependencies, and explicit Firefox versioning.
+- **Reproducible by Design** — Full configuration snapshots, pinned dependencies, and an explicit Playwright Chromium revision.
 - **Extensible** — Custom commands, pluggable storage providers, and tunable JavaScript instrumentation.
 - **Research Proven** — Used in 75+ peer-reviewed studies on web privacy, tracking, and security.
 
@@ -70,8 +69,11 @@ conda activate openwpm
 
 The script:
 1. Creates (or overwrites) a conda environment named `openwpm`
-2. Installs a compatible unbranded Firefox build
-3. Builds the privileged instrumentation WebExtension
+2. Installs Playwright 1.62.0 and its bundled Chromium 151.0.7922.34
+
+**Browser pin:** Playwright `1.62.0` → Chromium `151.0.7922.34`. Reinstall with `python -m playwright install chromium` (or `./scripts/install-chromium.sh`). Binaries go in `./ms-playwright` by default.
+
+Respect site robots.txt and terms of service. Measurement code does not bypass authentication walls with stolen sessions.
 
 **macOS note:** You may need Xcode command-line tools (`xcode-select --install`) for native modules. XQuartz is required for GUI applications under Docker.
 
@@ -93,6 +95,13 @@ For a realistic top-sites crawl using the Tranco list (note: includes NSFW domai
 
 ```bash
 python demo.py --tranco
+```
+
+**Smoke (CI / operators):**
+
+```bash
+python -m openwpm.smoke            # headless, example.com, screenshot + HAR
+python -m openwpm.smoke --headed   # visible window
 ```
 
 **Headless example (servers / CI):**
@@ -153,7 +162,7 @@ See also the repository root [SECURITY.md](SECURITY.md) for vulnerability report
 OpenWPM uses a multi-process architecture for isolation and resilience:
 
 - **TaskManager** — User-facing orchestrator, command scheduling, watchdogs, failure recovery.
-- **N × BrowserManager** — One per Firefox instance (Selenium + privileged extension).
+- **N × BrowserManager** — One per Chromium persistent context (Playwright + CDP instrumentation).
 - **StorageController** (separate process) — Receives data over TCP, writes to pluggable structured/unstructured providers.
 - **MPLogger** — Centralized log aggregation.
 
@@ -196,7 +205,7 @@ docker run -v $PWD/docker-volume:/opt/OpenWPM/datadir \
   -it --init openwpm
 ```
 
-**Important:** `--shm-size=2g` (or higher) is required to prevent Firefox crashes on many sites.
+**Important:** `--shm-size=2g` (or higher) is required to prevent Chromium crashes on many sites. The image sets `OPENWPM_NO_SANDBOX=1` because the container has no Chromium sandbox user namespace.
 
 See the full Docker section in the original documentation and `scripts/run-on-osx-via-docker.sh` for macOS.
 

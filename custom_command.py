@@ -11,12 +11,10 @@ Steps to have a custom command run as part of a CommandSequence
 
 import logging
 
-from selenium.webdriver import Firefox
-from selenium.webdriver.common.by import By
-
+from openwpm.browser import BrowserSession, By
 from openwpm.commands.types import BaseCommand
 from openwpm.config import BrowserParams, ManagerParams
-from openwpm.socket_interface import ClientSocket
+from openwpm.instrumentation.controller import MeasurementController
 
 
 class LinkCountingCommand(BaseCommand):
@@ -34,10 +32,10 @@ class LinkCountingCommand(BaseCommand):
     # an explanation of each parameter
     def execute(
         self,
-        webdriver: Firefox,
+        webdriver: BrowserSession,
         browser_params: BrowserParams,
         manager_params: ManagerParams,
-        extension_socket: ClientSocket,
+        extension_socket: MeasurementController,
     ) -> None:
         current_url = webdriver.current_url
         link_count = len(webdriver.find_elements(By.TAG_NAME, "a"))

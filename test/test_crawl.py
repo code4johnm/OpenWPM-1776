@@ -46,8 +46,8 @@ TEST_SITES = [
 def test_browser_profile_coverage(default_params, task_manager_creator):
     """Test the coverage of the browser's profile.
 
-    This verifies that Firefox's places.sqlite database contains all
-    visited sites. If it does not, it is likely the profile is lost at
+    This verifies that Chromium's History database contains visited
+    sites. If it does not, it is likely the profile is lost at
     some point during the crawl.
     """
     # Run the test crawl
@@ -69,8 +69,6 @@ def test_browser_profile_coverage(default_params, task_manager_creator):
         tar.extractall(browser_params[0].profile_archive_dir)
 
     # Output databases
-    ff_db = browser_params[0].profile_archive_dir / "places.sqlite"
-
     # Grab urls from crawl database
     rows = db_utils.query_db(crawl_db, "SELECT url FROM http_requests")
     req_ps = set()  # visited domains from http_requests table
@@ -87,9 +85,13 @@ def test_browser_profile_coverage(default_params, task_manager_creator):
         ps = du.get_ps_plus_1(url)
         hist_ps.add(ps)
 
-    # Grab urls from Firefox database
-    profile_ps = set()  # visited domains from firefox profile
-    rows = db_utils.query_db(ff_db, "SELECT url FROM moz_places")
+    # Grab urls from the Chromium History database
+    profile_ps = set()
+    chrome_history = browser_params[0].profile_archive_dir / "Default" / "History"
+    if not chrome_history.is_file():
+        # History lives at Default/History after extract; also try profile root
+        chrome_history = browser_params[0].profile_archive_dir / "History"
+    rows = db_utils.query_db(chrome_history, "SELECT url FROM urls")
     for (host,) in rows:
         try:
             profile_ps.add(du.get_ps_plus_1(host))

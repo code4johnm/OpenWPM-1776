@@ -61,7 +61,7 @@ pytest test/test_http_instrumentation.py -v -k "test_http"
 OpenWPM development follows a tight feedback loop. Always:
 
 1. **Build** — `./scripts/build-extension.sh` (or `cd Extension && npm run build`)
-2. **Run** — `python demo.py --headless` (small sites) or `python -m test.manual_test --selenium`
+2. **Run** — `python demo.py --headless` (small sites) or `python -m test.manual_test`
 3. **Test** — `pytest -m "not slow" -q`, `pytest -m pyonly`, targeted files with `-k`
 4. **Lint & Typecheck** — `pre-commit run --all-files` (covers black, isort, mypy, actionlint, etc.)
 5. **Fix** — apply auto-fixes (`npm run fix` in Extension, or editor), then repeat from step 1

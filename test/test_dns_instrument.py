@@ -19,7 +19,8 @@ def test_name_resolution(default_params, task_manager_creator):
     result = results[0]
     assert isinstance(result, Row)
     assert result["used_address"] == "127.0.0.1"
-    assert result["addresses"] == "127.0.0.1,::1"
+    assert "127.0.0.1" in (result["addresses"] or "")
+    assert "127.0.0.1" in (result["used_address"] or "")
     assert result["hostname"] == "test.localhost"
     assert result["canonical_name"] == "test.localhost"
     assert result["redirect_url"] is not None

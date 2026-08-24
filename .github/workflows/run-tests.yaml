@@ -24,6 +24,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: python demo.py --headless
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Smoke crawl
+        run: python -m openwpm.smoke
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -39,6 +51,8 @@ jobs:
           DISPLAY: ":99.0"
           GROUP: ${{ matrix.group }}
           SPLITS: 7
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
+          OPENWPM_NO_SANDBOX: "1"
       - name: Test failure summary
         if: always()
         continue-on-error: true

@@ -53,11 +53,11 @@ of configurations of `class<BrowserParams>`.
   - The number of browser instances to run in parallel.
   - Default: `1`
 - `memory_watchdog`
-  - A watchdog that tries to ensure that no Firefox instance takes up too much memory.
+  - A watchdog that tries to ensure that no Chromium instance takes up too much memory.
   - Mostly useful for long-running cloud crawls.
   - Default: `False`
 - `process_watchdog`
-  - Kills `GeckoDriver` or `Xvfb` instances that are not currently controlled by OpenWPM.
+  - Kills leftover Chromium or `Xvfb` instances that are not currently controlled by OpenWPM.
   - Default: `False`
 - `failure_limit`
   - The number of command failures tolerated before raising `CommandExecutionError`.
@@ -70,10 +70,17 @@ Note: Instrumentation configuration options are described in the
 described in the *Browser Profile Support* section. As such, these options are
 left out of this section.
 
+- `browser`
+  - Engine to launch. Only `"chromium"` is supported.
+- `launch_args`
+  - Extra Chromium command-line flags (list of strings). Firefox `prefs` are ignored.
+- `locale` / `timezone_id`
+  - Optional Playwright context locale and IANA timezone. Unset by default so
+    the browser default is used.
 - `bot_mitigation`
   - Performs some actions to prevent the platform from being detected as a bot.
   - Note, these aren't comprehensive and automated interaction with the site
-    will still appear very bot-like.
+    will still appear very bot-like. `navigator.webdriver` remains true.
 - `display_mode`:
   - `native`:
     - Launch the browser normally - GUI will be visible

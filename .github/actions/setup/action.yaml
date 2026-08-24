@@ -37,4 +37,22 @@ runs:
       run: $GITHUB_WORKSPACE/install.sh --skip-create
     - shell: bash
       run: echo "$OPENWPM_CONDA_PATH/bin" >> $GITHUB_PATH
+
+    - name: Cache Playwright Chromium
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/ms-playwright
+        key: playwright-chromium-1.62.0-${{ runner.os }}
+
+    - name: Install Chromium OS deps
+      shell: bash
+      run: python -m playwright install-deps chromium
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
+
+    - name: Ensure Chromium is present
+      shell: bash
+      run: python -m playwright install chromium
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
     # Now we have a working OpenWPM environment

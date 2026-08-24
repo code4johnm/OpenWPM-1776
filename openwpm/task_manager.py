@@ -223,18 +223,15 @@ class TaskManager:
             if self.manager_params.memory_watchdog:
                 for browser in self.browsers:
                     try:
-                        # Sum the memory used by the geckodriver process, the
-                        # main Firefox process and all its child processes.
-                        # Use the USS metric for child processes, to avoid
-                        # double-counting memory shared with their parent.
-                        geckodriver = psutil.Process(browser.geckodriver_pid)
-                        mem_bytes = geckodriver.memory_info().rss
-                        children = geckodriver.children()
-                        if children:
-                            firefox = children[0]
-                            mem_bytes += firefox.memory_info().rss
-                            for child in firefox.children():
+                        # Sum memory used by Chromium and its child processes.
+                        # USS for children avoids double-counting shared memory.
+                        chromium = psutil.Process(browser.browser_pid)
+                        mem_bytes = chromium.memory_info().rss
+                        for child in chromium.children(recursive=True):
+                            try:
                                 mem_bytes += child.memory_full_info().uss
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
                         mem = mem_bytes / 2**20
                         if mem > BROWSER_MEMORY_LIMIT:
                             self.logger.info(
@@ -250,22 +247,24 @@ class TaskManager:
             # 300 second buffer to avoid killing freshly launched browsers
             # TODO This buffer should correspond to the maximum spawn timeout
             if self.manager_params.process_watchdog:
-                geckodriver_pids: Set[int] = set()
+                browser_pids: Set[int] = set()
                 display_pids: Set[int] = set()
                 check_time = time.time()
                 for browser in self.browsers:
-                    if browser.geckodriver_pid is not None:
-                        geckodriver_pids.add(browser.geckodriver_pid)
+                    if browser.browser_pid is not None:
+                        browser_pids.add(browser.browser_pid)
                     if browser.display_pid is not None:
                         display_pids.add(browser.display_pid)
                 for process in psutil.process_iter():
+                    pname = process.name() or ""
                     if process.create_time() + 300 < check_time and (
                         (
-                            process.name() == "geckodriver"
-                            and (process.pid not in geckodriver_pids)
+                            pname.lower()
+                            in ("chromium", "chrome", "headless_shell", "chrome-headless-shell")
+                            and (process.pid not in browser_pids)
                         )
                         or (
-                            process.name() == "Xvfb"
+                            pname == "Xvfb"
                             and (process.pid not in display_pids)
                         )
                     ):

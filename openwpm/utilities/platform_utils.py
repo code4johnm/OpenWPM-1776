@@ -3,7 +3,7 @@ import os
 import subprocess
 from collections import OrderedDict
 from copy import deepcopy
-from sys import platform
+
 
 from tabulate import tabulate
 
@@ -33,41 +33,8 @@ def parse_http_stack_trace_str(trace_str):
     return stack_trace
 
 
-def get_firefox_binary_path():
-    """
-    If ../../firefox-bin/firefox-bin or os.environ["FIREFOX_BINARY"] exists,
-    return it. Else, throw a RuntimeError.
-    """
-    if "FIREFOX_BINARY" in os.environ:
-        firefox_binary_path = os.environ["FIREFOX_BINARY"]
-        if not os.path.isfile(firefox_binary_path):
-            raise RuntimeError(
-                "No file found at the path specified in "
-                "environment variable `FIREFOX_BINARY`."
-                "Current `FIREFOX_BINARY`: %s" % firefox_binary_path
-            )
-        return firefox_binary_path
-
-    root_dir = os.path.dirname(__file__) + "/../.."
-    if platform == "darwin":
-        firefox_binary_path = os.path.abspath(
-            root_dir + "/Nightly.app/Contents/MacOS/firefox"
-        )
-    else:
-        firefox_binary_path = os.path.abspath(root_dir + "/firefox-bin/firefox-bin")
-
-    if not os.path.isfile(firefox_binary_path):
-        raise RuntimeError(
-            "The `firefox-bin/firefox-bin` binary is not found in the root "
-            "of the  OpenWPM directory (did you run the install script "
-            "(`install.sh`)?). Alternatively, you can specify a binary "
-            "location using the OS environment variable FIREFOX_BINARY."
-        )
-    return firefox_binary_path
-
-
 def get_version():
-    """Return OpenWPM version tag/current commit and Firefox version"""
+    """Return OpenWPM version tag/current commit and Chromium version"""
     try:
         openwpm = subprocess.check_output(
             ["git", "describe", "--tags", "--always"]
@@ -77,14 +44,9 @@ def get_version():
         with open(ver, "r") as f:
             openwpm = f.readline().strip()
 
-    firefox_binary_path = get_firefox_binary_path()
-    try:
-        firefox = subprocess.check_output([firefox_binary_path, "--version"])
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("Firefox not found. " " Did you run `./install.sh`?") from e
+    from openwpm.browser_bin import chromium_version
 
-    ff = firefox.split()[-1]
-    return openwpm, ff
+    return openwpm, chromium_version()
 
 
 def get_configuration_string(manager_params, browser_params, versions):
@@ -95,7 +57,7 @@ def get_configuration_string(manager_params, browser_params, versions):
     size terminal windows.
     """
 
-    config_str = "\n\nOpenWPM Version: %s\nFirefox Version: %s\n" % versions
+    config_str = "\n\nOpenWPM Version: %s\nChromium Version: %s\n" % versions
     config_str += "\n========== Manager Configuration ==========\n"
 
     config_str += json.dumps(

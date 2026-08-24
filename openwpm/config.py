@@ -12,9 +12,7 @@ from .types import BrowserId
 
 BOOL_TYPE_VALIDATION_LIST = [True, False]
 DISPLAY_MODE_VALIDATION_LIST = ["native", "headless", "xvfb"]
-SUPPORTED_BROWSER_LIST = [
-    "firefox"
-]  # Using List instead of a str type to future proof the logic as OpenWPM may add support for more browsers in future
+SUPPORTED_BROWSER_LIST = ["chromium"]
 TP_COOKIES_OPTIONALS_LIST = ["always", "never", "from_visited"]
 LOG_EXTENSION_TYPE_LIST = [".log"]
 CONFIG_ERROR_STRING = (
@@ -91,8 +89,11 @@ class BrowserParams(DataClassJsonMixin):
         default=None, metadata=DCJConfig(encoder=path_to_str, decoder=str_to_path)
     )
     display_mode: Literal["native", "headless", "xvfb"] = "native"
-    browser: str = "firefox"
+    browser: str = "chromium"
     prefs: dict = field(default_factory=dict)
+    launch_args: List[str] = field(default_factory=list)
+    locale: Optional[str] = None
+    timezone_id: Optional[str] = None
     tp_cookies: str = "always"
     bot_mitigation: bool = False
     profile_archive_dir: Optional[Path] = field(
@@ -170,12 +171,11 @@ class ManagerParams(DataClassJsonMixin):
     """A platform wide flag that can be used to only run certain functionality
     while testing. For example, the Javascript instrumentation"""
     memory_watchdog: bool = False
-    """A watchdog that tries to ensure that no Firefox instance takes up too much memory.
+    """A watchdog that tries to ensure that no Chromium instance takes up too much memory.
     It is mostly useful for long running cloud crawls"""
     process_watchdog: bool = False
-    """It is used to create another thread that kills off `GeckoDriver` (or `Xvfb`)
-    instances that haven't been spawned by OpenWPM. (GeckoDriver is used by
-    Selenium to control Firefox and Xvfb a "virtual display" so we simulate having graphics when running on a server).
+    """Kills leftover Chromium / Xvfb processes that OpenWPM did not spawn.
+    Xvfb is a virtual display used when display_mode is ``xvfb``.
     """
 
     num_browsers: int = 1
@@ -251,10 +251,14 @@ def validate_browser_params(browser_params: BrowserParams) -> None:
 
         if browser_params.callstack_instrument:
             raise ConfigError(
-                "The callstack_instrument is currently non-functional "
-                "(it has been broken since Firefox changes in prior versions). "
-                "See https://github.com/openwpm/OpenWPM/issues/557 for details and progress. "
+                "The callstack_instrument is currently non-functional. "
                 "Do not enable this flag."
+            )
+
+        if browser_params.tracking_protection:
+            raise ConfigError(
+                "tracking_protection is not supported on Chromium. "
+                "Leave this flag False."
             )
 
         if not isinstance(browser_params.save_content, bool) and not isinstance(

@@ -1,17 +1,14 @@
 import pytest
 
 from openwpm.browser_manager import is_dns_error
-from openwpm.commands.utils.webdriver_utils import parse_neterror
+from openwpm.instrumentation.neterror import parse_neterror
 from openwpm.utilities import db_utils
 
 
 def test_parse_neterror():
     text = (
-        "selenium.common.exceptions.WebDriverException: "
-        "Message: Reached error page: "
-        "about:neterror?e=dnsNotFound&u=http%3A//medmood.it/&c=UTF-8&"
-        "f=regular&d=We%20can%E2%80%99t%20"
-        "connect%20to%20the%20server%20at%20medmood.it."
+        "Page.goto: net::ERR_NAME_NOT_RESOLVED at http://medmood.it/\n"
+        "Call log:\n  - navigating to \"http://medmood.it/\", waiting until \"domcontentloaded\""
     )
     assert parse_neterror(text) == "dnsNotFound"
 
