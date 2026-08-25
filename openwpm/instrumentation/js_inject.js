@@ -820,18 +820,25 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
 
   const sendFactory = function (eventId, $sendMessagesToLogger) {
     let messages = [];
-    // debounce sending queued messages
-    const send = debounce(function () {
+    const flush = function () {
+      if (!messages.length) {
+        return;
+      }
       $sendMessagesToLogger(eventId, messages);
-
-      // clear the queue
       messages = [];
-    }, 100);
+    };
+    // debounce sending queued messages; tests flush immediately
+    const send = debounce(flush, 100);
+    window.__openwpm_js_flush_queue__ = flush;
 
     return function (msgType, msg) {
       // queue the message
       messages.push({ type: msgType, content: msg });
-      send();
+      if (window.__OPENWPM_JS_TESTING__) {
+        flush();
+      } else {
+        send();
+      }
     };
   };
 
@@ -846,7 +853,13 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     JSInstrumentRequests.forEach(function (item) {
       let targetObject;
       try {
-        targetObject = eval(item.object);
+        // Python-side settings pass a string path (`window.navigator`).
+        // Test pages pass the live object to window.instrumentJS().
+        if (typeof item.object === "string") {
+          targetObject = eval(item.object);
+        } else {
+          targetObject = item.object;
+        }
       } catch (e) {
         console.warn(
           `OpenWPM: eval failed for instrument target: ${item.object}`,
@@ -878,12 +891,9 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
 
 
 (function bootstrapOpenWPMJSInstrument() {
-  const settings = window.__OPENWPM_JS_SETTINGS__;
-  if (!settings || !settings.length) {
-    return;
-  }
+  const settings = window.__OPENWPM_JS_SETTINGS__ || [];
+  const testing = !!window.__OPENWPM_JS_TESTING__;
   const pending = [];
-  let flushTimer = null;
   function sendMessagesToLogger(_eventId, messages) {
     try {
       if (typeof window.__openwpm_js_log__ === "function") {
@@ -896,13 +906,27 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     }
   }
   window.__openwpm_js_flush__ = function () {
+    if (typeof window.__openwpm_js_flush_queue__ === "function") {
+      try {
+        window.__openwpm_js_flush_queue__();
+      } catch (e) {
+        /* ignore */
+      }
+    }
     if (pending.length && typeof window.__openwpm_js_log__ === "function") {
       pending.splice(0).forEach((m) => window.__openwpm_js_log__(m));
     }
   };
+  try {
+    window.addEventListener("pagehide", window.__openwpm_js_flush__);
+  } catch (e) {
+    /* ignore */
+  }
   const instrumentJS = getInstrumentJS("openwpm", sendMessagesToLogger);
-  instrumentJS(settings);
-  if (window.__OPENWPM_JS_TESTING__) {
+  if (settings.length) {
+    instrumentJS(settings);
+  }
+  if (testing) {
     window.instrumentJS = instrumentJS;
   }
 })();

@@ -248,3 +248,35 @@ CREATE TABLE IF NOT EXISTS dns_responses (
   error TEXT,
   time_stamp DATETIME NOT NULL
  );
+
+/*
+ # Crawl-run provenance (off by default; BrowserParams.record_provenance)
+ */
+CREATE TABLE IF NOT EXISTS crawl_run_provenance (
+  browser_id INTEGER NOT NULL,
+  browser_engine TEXT NOT NULL,
+  display_mode TEXT NOT NULL,
+  headed INTEGER NOT NULL,
+  playwright_version TEXT NOT NULL,
+  user_agent TEXT NOT NULL,
+  FOREIGN KEY(browser_id) REFERENCES crawl(browser_id)
+);
+
+/*
+ # Main-document 403/429/503 only (off by default; record_crawl_outcome)
+ */
+CREATE TABLE IF NOT EXISTS crawl_outcome (
+  visit_id INTEGER NOT NULL,
+  browser_id INTEGER NOT NULL,
+  http_status INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  resource_scope TEXT NOT NULL,
+  PRIMARY KEY (visit_id, browser_id),
+  CHECK (
+    (http_status = 403 AND outcome = 'forbidden')
+    OR (http_status = 429 AND outcome = 'rate_limited')
+    OR (http_status = 503 AND outcome = 'unavailable')
+  ),
+  CHECK (resource_scope = 'document'),
+  FOREIGN KEY(browser_id) REFERENCES crawl(browser_id)
+);

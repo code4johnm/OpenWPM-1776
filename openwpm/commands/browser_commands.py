@@ -80,6 +80,18 @@ class GetCommand(BaseCommand):
         except BrowserError:
             pass
 
+        if (
+            extension_socket is not None
+            and getattr(browser_params, "record_crawl_outcome", False)
+            == "status_codes_only"
+        ):
+            try:
+                extension_socket.record_document_outcome(
+                    self.visit_id, getattr(webdriver, "last_document_status", None)
+                )
+            except Exception:
+                logger.exception("Failed to record crawl_outcome for %s", self.url)
+
         if self.sleep:
             time.sleep(self.sleep)
 

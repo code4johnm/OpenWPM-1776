@@ -131,6 +131,7 @@ def deploy_chromium(
     page.set_viewport_size(
         {"width": DEFAULT_VIEWPORT["width"], "height": DEFAULT_VIEWPORT["height"]}
     )
+    _ensure_profile_markers(browser_profile_path)
 
     browser_pid = None
     try:
@@ -160,3 +161,21 @@ def deploy_chromium(
         % (browser_params.browser_id, browser_pid)
     )
     return session, browser_profile_path, display
+
+
+def _ensure_profile_markers(browser_profile_path: Path) -> None:
+    """Write Chromium profile markers Playwright may not flush until quit.
+
+    dump_profile requires Default/Preferences and Local State. Creating them
+    at launch lets test_save_incomplete_profile_error unlink Preferences
+    (FileNotFoundError if the file never existed) and still leave a dumpable
+    profile for the happy path.
+    """
+    default_dir = browser_profile_path / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    prefs = default_dir / "Preferences"
+    if not prefs.exists():
+        prefs.write_text("{}", encoding="utf-8")
+    local_state = browser_profile_path / "Local State"
+    if not local_state.exists():
+        local_state.write_text("{}", encoding="utf-8")

@@ -83,7 +83,22 @@ class MyHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
-        # 2. Abort connection after sending partial response.
+        # 2. Magic status codes for crawl_outcome tests.
+        if self.path.startswith("/MAGIC_STATUS/"):
+            parsed_path = urlparse(self.path)
+            try:
+                status = int(parsed_path.path.rstrip("/").rsplit("/", 1)[-1])
+            except (TypeError, ValueError):
+                status = 404
+            body = f"MAGIC_STATUS {status}".encode("ascii")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 3. Abort connection after sending partial response.
         if self.path.startswith("/CONNECTION_ABORT/"):
             self.send_response(200)
             self.send_header("Content-Length", "99999")

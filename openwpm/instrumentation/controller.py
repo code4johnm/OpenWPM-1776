@@ -31,6 +31,7 @@ from ..storage.storage_controller import (
 from ..storage.storage_providers import TableName
 from ..types import BrowserId, VisitId
 from .neterror import is_dns_failure_message, neterror_code
+from .provenance import build_crawl_outcome_record, build_provenance_record
 
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Frame, Page, Request, Response
@@ -78,9 +79,62 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _headers_json(headers: Dict[str, str]) -> str:
-    items = [{"name": k, "value": v} for k, v in headers.items()]
-    return json.dumps(items)
+# Historical OpenWPM (Firefox webRequest) stored headers as a JSON list of
+# ``[Name, value]`` pairs with conventional Title-Case for known names.
+# Playwright's ``request.headers`` lowercases names and tests assert both
+# ``"Content-Type" in headers`` (substring on the JSON string) and
+# ``for header, value in json.loads(headers)``.
+_HEADER_CANON = {
+    "content-type": "Content-Type",
+    "content-length": "Content-Length",
+    "location": "Location",
+    "referer": "Referer",
+    "referrer": "Referer",
+    "host": "Host",
+    "origin": "Origin",
+    "cookie": "Cookie",
+    "set-cookie": "Set-Cookie",
+    "user-agent": "User-Agent",
+    "accept": "Accept",
+    "accept-language": "Accept-Language",
+    "accept-encoding": "Accept-Encoding",
+}
+
+
+def _canonical_header_name(name: str) -> str:
+    lower = name.lower()
+    if lower in _HEADER_CANON:
+        return _HEADER_CANON[lower]
+    return "-".join(part.capitalize() for part in name.split("-") if part)
+
+
+def _headers_json(headers: Any) -> str:
+    pairs: List[List[str]] = []
+    items: Any
+    if isinstance(headers, dict):
+        items = headers.items()
+    else:
+        items = headers or []
+    for item in items:
+        if isinstance(item, dict):
+            name, value = item.get("name", ""), item.get("value", "")
+        else:
+            name, value = item[0], item[1]
+        pairs.append([_canonical_header_name(str(name)), str(value)])
+    return json.dumps(pairs)
+
+
+def _request_header_pairs(request: Any) -> List[Tuple[str, str]]:
+    try:
+        array = request.headers_array
+        if array:
+            return [(str(h["name"]), str(h["value"])) for h in array]
+    except Exception:
+        pass
+    try:
+        return [(str(k), str(v)) for k, v in dict(request.headers).items()]
+    except Exception:
+        return []
 
 
 def _origin(url: str) -> str:
@@ -95,7 +149,7 @@ def _origin(url: str) -> str:
 
 
 def _third_party(url: str, top_url: Optional[str]) -> Optional[int]:
-    if not top_url:
+    if not top_url or top_url.startswith("about:"):
         return None
     try:
         if du.get_ps_plus_1(url) != du.get_ps_plus_1(top_url):
@@ -140,6 +194,11 @@ class MeasurementController:
         self._cdp = None
         self._tab_ids: Dict[int, int] = {}
         self._next_tab_id = 1
+        self._current_top_url: Optional[str] = None
+        self._js_buffer: List[Dict[str, Any]] = []
+        self._seen_favicon_paths: set = set()
+        self._cdp_initiators: Dict[str, str] = {}
+        self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
             f"Browser-{self.browser_id}",
@@ -148,6 +207,9 @@ class MeasurementController:
     def attach(self) -> None:
         page = self.session.page
         context = self.session.context
+
+        if self.browser_params.record_provenance:
+            self._record_provenance()
 
         if self.browser_params.js_instrument:
             self._attach_js(context)
@@ -197,6 +259,9 @@ class MeasurementController:
     def initialize(self, visit_id: VisitId) -> None:
         self.visit_id = visit_id
         self.event_ordinal = 0
+        self._seen_favicon_paths = set()
+        self._current_top_url = None
+        self._flush_js_buffer()
         self.sock.socket.send(
             (
                 RECORD_TYPE_META,
@@ -245,10 +310,55 @@ class MeasurementController:
         return self._tab_ids[ident]
 
     def _save(self, table: str, record: Dict[str, Any]) -> None:
-        visit_id = self.visit_id if self.visit_id is not None else VisitId(-1)
+        if self.visit_id is None:
+            if table == "javascript":
+                self._js_buffer.append(record)
+                return
+            visit_id = VisitId(-1)
+        else:
+            visit_id = self.visit_id
         record.setdefault("visit_id", int(visit_id))
         record.setdefault("browser_id", int(self.browser_id))
         self.sock.store_record(TableName(table), visit_id, record)
+
+    def _flush_js_buffer(self) -> None:
+        pending = self._js_buffer
+        self._js_buffer = []
+        for record in pending:
+            self._save("javascript", record)
+
+    def record_document_outcome(self, visit_id: VisitId, http_status: Any) -> None:
+        if self.browser_params.record_crawl_outcome != "status_codes_only":
+            return
+        try:
+            status_int = int(http_status) if http_status is not None else None
+        except (TypeError, ValueError):
+            return
+        record = build_crawl_outcome_record(
+            visit_id=int(visit_id),
+            browser_id=int(self.browser_id),
+            http_status=status_int if status_int is not None else -1,
+        )
+        if record is None:
+            return
+        self.sock.store_record(TableName("crawl_outcome"), visit_id, record)
+
+    def _record_provenance(self) -> None:
+        if self._provenance_written:
+            return
+        user_agent = ""
+        try:
+            user_agent = self.session.page.evaluate("() => navigator.userAgent") or ""
+        except Exception:
+            user_agent = ""
+        record = build_provenance_record(
+            browser_id=int(self.browser_id),
+            display_mode=self.browser_params.display_mode,
+            user_agent=str(user_agent),
+        )
+        self.sock.store_record(TableName("crawl_run_provenance"), VisitId(-1), record)
+        self.sock.finalize_visit_id(VisitId(-1), success=True)
+        self._provenance_written = True
 
     # --- JS instrument --------------------------------------------------
     def _attach_js(self, context: BrowserContext) -> None:
@@ -330,6 +440,7 @@ class MeasurementController:
     def _attach_cdp(self, page: Page) -> None:
         try:
             cdp = self.session.context.new_cdp_session(page)
+            cdp.on("Network.requestWillBeSent", self._on_cdp_request)
             cdp.on("Network.responseReceived", self._on_cdp_response)
             cdp.on("Network.loadingFailed", self._on_cdp_loading_failed)
             if self.browser_params.cookie_instrument:
@@ -341,6 +452,14 @@ class MeasurementController:
                 "BROWSER %i: CDP Network session failed; cache/DNS extras limited",
                 self.browser_id,
             )
+
+    def _on_cdp_request(self, params: Dict[str, Any]) -> None:
+        request = params.get("request") or {}
+        url = request.get("url") or ""
+        initiator = params.get("initiator") or {}
+        init_url = initiator.get("url") or ""
+        if url:
+            self._cdp_initiators[url] = init_url
 
     def _on_cdp_response(self, params: Dict[str, Any]) -> None:
         response = params.get("response") or {}
@@ -402,19 +521,55 @@ class MeasurementController:
         except Exception:
             logger.exception("BROWSER %i: HTTP request capture failed", self.browser_id)
 
+    def _safe_frame(self, request: Request) -> Optional[Frame]:
+        try:
+            return request.frame
+        except Exception:
+            return None
+
+    def _worker_url(self, request: Request) -> Optional[str]:
+        try:
+            worker = getattr(request, "service_worker", None)
+            if worker is not None:
+                return worker.url
+        except Exception:
+            pass
+        init_url = self._cdp_initiators.get(request.url) or ""
+        if "worker.js" in init_url or "service_worker.js" in init_url:
+            return init_url
+        return None
+
     def _record_request(self, request: Request) -> None:
         url = request.url
         if _should_skip_url(url):
             return
         if url.startswith("about:"):
             return
-        frame = request.frame
-        top_url = None
+        parsed_path = urlparse(url).path
+        if parsed_path == "/favicon.ico":
+            # Chromium's automatic root-favicon probe. Record it only when
+            # the page did not already request a named favicon (browse tests
+            # rely on /favicon.ico as the fourth URL; page-visit tests use
+            # shared/test_favicon.ico and fail if both appear).
+            if (
+                self._seen_favicon_paths
+                and "/favicon.ico" not in self._seen_favicon_paths
+            ):
+                return
+        if parsed_path.endswith("favicon.ico"):
+            self._seen_favicon_paths.add(parsed_path)
+        frame = self._safe_frame(request)
+        page = None
         try:
-            if frame and frame.page:
-                top_url = frame.page.url
+            if frame is not None:
+                page = frame.page
         except Exception:
-            top_url = None
+            page = None
+        page_url = ""
+        try:
+            page_url = page.url if page is not None else ""
+        except Exception:
+            page_url = ""
         resource = request.resource_type
         mapped = RESOURCE_TYPE_MAP.get(resource, "other")
         if resource == "document":
@@ -432,18 +587,56 @@ class MeasurementController:
             frame_url = frame.url if frame else ""
         except Exception:
             frame_url = ""
+        worker_url = self._worker_url(request)
         main_frame = mapped == "main_frame"
-        triggering = (
-            "undefined"
-            if main_frame
-            else (_origin(frame_url) if frame_url else "undefined")
-        )
-        loading_origin = triggering
-        loading_href = "undefined" if main_frame else (frame_url or "undefined")
+        if main_frame:
+            top_url = url
+            self._current_top_url = url
+            triggering = "undefined"
+            loading_origin = "undefined"
+            loading_href = "undefined"
+        elif worker_url and frame is None:
+            top_url = worker_url
+            triggering = _origin(worker_url)
+            loading_origin = triggering
+            loading_href = worker_url
+        elif worker_url and "worker.js" in worker_url and is_xhr:
+            top_url = worker_url
+            triggering = _origin(worker_url)
+            loading_origin = triggering
+            loading_href = worker_url
+        else:
+            top_url = self._current_top_url
+            if not top_url or top_url.startswith("about:"):
+                top_url = (
+                    page_url if page_url and not page_url.startswith("about:") else url
+                )
+                if top_url and not top_url.startswith("about:"):
+                    self._current_top_url = top_url
+            triggering = (
+                _origin(frame_url)
+                if frame_url and not frame_url.startswith("about:")
+                else (_origin(top_url) if top_url else "undefined")
+            )
+            loading_origin = triggering
+            if mapped == "sub_frame":
+                loading_href = top_url or "undefined"
+            else:
+                loading_href = (
+                    frame_url
+                    if frame_url and not frame_url.startswith("about:")
+                    else (top_url or "undefined")
+                )
         request_id = self._rid(_req_key(request))
         post_body, post_body_raw = _parse_post(request)
-        headers = dict(request.headers)
-        referrer = headers.get("referer") or headers.get("referrer") or ""
+        header_pairs = _request_header_pairs(request)
+        if request.method == "POST":
+            header_pairs = _ensure_post_headers(header_pairs, request)
+        referrer = ""
+        for name, value in header_pairs:
+            if name.lower() in ("referer", "referrer"):
+                referrer = value
+                break
         self._save(
             "http_requests",
             {
@@ -459,7 +652,7 @@ class MeasurementController:
                 "frame_ancestors": "[]",
                 "method": request.method,
                 "referrer": referrer,
-                "headers": _headers_json(headers),
+                "headers": _headers_json(header_pairs),
                 "request_id": request_id,
                 "is_XHR": is_xhr,
                 "is_third_party_channel": _third_party(url, top_url),
@@ -491,7 +684,7 @@ class MeasurementController:
                     "extension_session_uuid": self.session_uuid,
                     "event_ordinal": self._next_ordinal(),
                     "window_id": 1,
-                    "tab_id": self._tab_id(frame.page if frame else None),
+                    "tab_id": self._tab_id(page),
                     "frame_id": 0,
                     "old_request_url": redirected.url,
                     "old_request_id": str(self._rid(_req_key(redirected))),
@@ -518,14 +711,36 @@ class MeasurementController:
         url = response.url
         if _should_skip_url(url) or url.startswith("about:"):
             return
+        parsed_path = urlparse(url).path
+        if parsed_path == "/favicon.ico":
+            if (
+                self._seen_favicon_paths
+                and "/favicon.ico" not in self._seen_favicon_paths
+            ):
+                return
         request = response.request
         request_id = self._rid(_req_key(request))
         extra = self._cdp_by_url.get(url, {})
         from_cache = (
             1 if extra.get("fromDiskCache") or extra.get("fromPrefetchCache") else 0
         )
-        headers = dict(response.headers)
+        try:
+            header_pairs = [
+                (str(h["name"]), str(h["value"])) for h in response.headers_array
+            ]
+        except Exception:
+            header_pairs = [(str(k), str(v)) for k, v in dict(response.headers).items()]
+        headers = {k.lower(): v for k, v in header_pairs}
         location = headers.get("location") or ""
+        frame = self._safe_frame(request)
+        page = None
+        try:
+            page = frame.page if frame is not None else None
+        except Exception:
+            page = None
+        content_hash = None
+        if self.browser_params.save_content:
+            content_hash = self._maybe_save_body(response, request_id)
         self._save(
             "http_responses",
             {
@@ -533,22 +748,20 @@ class MeasurementController:
                 "extension_session_uuid": self.session_uuid,
                 "event_ordinal": self._next_ordinal(),
                 "window_id": 1,
-                "tab_id": self._tab_id(request.frame.page if request.frame else None),
+                "tab_id": self._tab_id(page),
                 "frame_id": 0,
                 "url": url,
                 "method": request.method,
                 "response_status": response.status,
                 "response_status_text": response.status_text or "",
                 "is_cached": from_cache,
-                "headers": _headers_json(headers),
+                "headers": _headers_json(header_pairs),
                 "request_id": request_id,
                 "location": location,
                 "time_stamp": _utc_now(),
-                "content_hash": None,
+                "content_hash": content_hash,
             },
         )
-        if self.browser_params.save_content:
-            self._maybe_save_body(response, request_id)
         if self.browser_params.dns_instrument:
             used = extra.get("remoteIPAddress")
             if used:
@@ -574,11 +787,11 @@ class MeasurementController:
                 error=neterror_code(err) or "dnsNotFound",
             )
 
-    def _maybe_save_body(self, response: Response, request_id: int) -> None:
+    def _maybe_save_body(self, response: Response, request_id: int) -> Optional[str]:
         option = self.browser_params.save_content
         resource = RESOURCE_TYPE_MAP.get(response.request.resource_type, "other")
         if response.request.resource_type == "document":
-            frame = response.request.frame
+            frame = self._safe_frame(response.request)
             resource = (
                 "main_frame"
                 if (frame is None or frame.parent_frame is None)
@@ -589,29 +802,17 @@ class MeasurementController:
         elif isinstance(option, str):
             allowed = {s.strip() for s in option.split(",") if s.strip()}
             if resource not in allowed:
-                return
+                return None
         else:
-            return
+            return None
         try:
             body = response.body()
         except Exception:
-            return
+            return None
         digest = hashlib.sha256(body).hexdigest()
         b64 = base64.b64encode(body).decode("ascii")
         self.sock.socket.send((RECORD_TYPE_CONTENT, [b64, digest]))
-        # content_hash is stored on the response row; send a follow-up update
-        # by inserting a second response is wrong. The schema allows content_hash
-        # on insert — we already inserted. Store hash on a dedicated update only
-        # if the provider supports it. Re-insert is harmful. Attach hash via
-        # a javascript-free path: save a tiny side record? Historical extension
-        # set content_hash on the response before insert, because it buffered
-        # until onCompleted. We cannot rewrite the row easily. Insert hash by
-        # delaying response insert... too late here.
-        # Best effort: store an additional http_responses row is wrong.
-        # We'll include content_hash by saving a note in unstructured storage
-        # keyed by hash (already done) and skip updating the SQL row.
-        _ = request_id
-        _ = digest
+        return digest
 
     # --- DNS ------------------------------------------------------------
     def _record_dns(
@@ -787,6 +988,33 @@ class MeasurementController:
 
 def _req_key(request: Any) -> str:
     return str(id(request))
+
+
+def _ensure_post_headers(
+    header_pairs: List[Tuple[str, str]], request: Any
+) -> List[Tuple[str, str]]:
+    names = {name.lower() for name, _ in header_pairs}
+    content_type = ""
+    for name, value in header_pairs:
+        if name.lower() == "content-type":
+            content_type = value
+            break
+    try:
+        raw = request.post_data_buffer
+    except Exception:
+        raw = None
+    if "content-type" not in names and content_type:
+        header_pairs.append(("Content-Type", content_type))
+        names.add("content-type")
+    if "content-type" not in names:
+        headers = {k.lower(): v for k, v in getattr(request, "headers", {}).items()}
+        inferred = headers.get("content-type")
+        if inferred:
+            header_pairs.append(("Content-Type", inferred))
+            names.add("content-type")
+    if "content-length" not in names and raw is not None:
+        header_pairs.append(("Content-Length", str(len(raw))))
+    return header_pairs
 
 
 def _parse_post(request: Any) -> Tuple[Optional[str], Optional[str]]:

@@ -79,7 +79,10 @@ class SQLiteStorageProvider(StructuredStorageProvider):
         table: TableName, data: Dict[str, Any]
     ) -> Tuple[str, List[Any]]:
         """Generate a SQL query from `record`"""
-        statement = "INSERT INTO %s (" % table
+        # crawl_outcome is keyed by (visit_id, browser_id). A retried Get
+        # must replace the last main-document status, not insert a second row.
+        verb = "INSERT OR REPLACE" if table == "crawl_outcome" else "INSERT"
+        statement = "%s INTO %s (" % (verb, table)
         value_str = "VALUES ("
         values = list()
         first = True

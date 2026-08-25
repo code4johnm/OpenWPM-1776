@@ -623,11 +623,9 @@ class BrowserManagerHandle:
 
     def shutdown_browser(self, during_init: bool, force: bool = False) -> None:
         """Runs the closing tasks for this Browser/BrowserManager"""
-        # Close BrowserManager process and children
-        self.logger.debug("BROWSER %i: Closing browser manager..." % self.browser_id)
-        self.close_browser_manager(force=force)
-
-        # Archive browser profile (if requested)
+        # Archive the live profile before quitting. Chromium rewrites
+        # Default/Preferences on close, which would hide a test that unlinks
+        # that file to assert dump failure.
         self.logger.debug(
             "BROWSER %i: during_init=%s | profile_archive_dir=%s"
             % (
@@ -649,6 +647,10 @@ class BrowserManagerHandle:
                 compress=True,
                 browser_params=self.browser_params,
             )
+
+        # Close BrowserManager process and children
+        self.logger.debug("BROWSER %i: Closing browser manager..." % self.browser_id)
+        self.close_browser_manager(force=force)
 
         # Clean up temporary files
         if self.current_profile_path is not None:

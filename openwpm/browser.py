@@ -121,6 +121,7 @@ class BrowserSession:
         self.page = page
         self.profile_path = profile_path
         self.browser_pid = browser_pid
+        self.last_document_status: Optional[int] = None
         self._dismiss_dialogs()
 
     def _dismiss_dialogs(self) -> None:
@@ -166,8 +167,14 @@ class BrowserSession:
     def get(self, url: str, timeout: float = 30000) -> None:
         """Navigate. Timeout is milliseconds (Playwright convention)."""
         Error, PWTimeout = _playwright_errors()
+        self.last_document_status = None
         try:
-            self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            response = self.page.goto(
+                url, wait_until="domcontentloaded", timeout=timeout
+            )
+            # Final document after redirects. None → no crawl_outcome row.
+            if response is not None:
+                self.last_document_status = response.status
             try:
                 self.page.wait_for_load_state("load", timeout=min(timeout, 15000))
             except PWTimeout:
