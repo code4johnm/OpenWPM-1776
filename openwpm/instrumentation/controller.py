@@ -266,6 +266,7 @@ class MeasurementController:
         self._resume_after_enable: Dict[int, str] = {}
         self._pending_content_responses: Dict[str, Any] = {}
         self._navigated_urls: set = set()
+        self._page_xhr_urls: List[Tuple[str, str]] = []
         self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
@@ -345,6 +346,7 @@ class MeasurementController:
         self._pending_cdp_worker = []
         self._cdp_bodies = {}
         self._pending_content_responses = {}
+        self._page_xhr_urls = []
         self._flush_js_buffer()
         self.sock.socket.send(
             (
@@ -359,10 +361,12 @@ class MeasurementController:
 
     def finalize(self, visit_id: VisitId, success: bool = True) -> None:
         self._flush_js()
+        self._collect_playwright_workers()
         self._resume_auto_attached_targets()
         # Pump on the command thread (not inside a Playwright event).
         self._pump_playwright(300)
         self._flush_pending_cdp_worker_requests()
+        self._mirror_page_xhr_to_dedicated_workers()
         self._flush_pending_responses()
         self._snapshot_history_safe()
         if self.browser_params.cookie_instrument:
@@ -382,9 +386,11 @@ class MeasurementController:
 
     def persist_http_responses(self) -> None:
         """Flush queued http_responses on the command thread after navigation."""
+        self._collect_playwright_workers()
         self._resume_auto_attached_targets()
         self._pump_playwright(300)
         self._flush_pending_cdp_worker_requests()
+        self._mirror_page_xhr_to_dedicated_workers()
         self._flush_pending_responses()
         self._snapshot_history_safe()
 
@@ -709,6 +715,55 @@ class MeasurementController:
             self._send_to_target(session_id, "Network.enable")
             self._send_to_target(session_id, "Runtime.runIfWaitingForDebugger")
         self._paused_session_ids.clear()
+
+    def _collect_playwright_workers(self) -> None:
+        page = None
+        try:
+            page = self.session.page
+        except Exception:
+            page = None
+        if page is None:
+            return
+        try:
+            workers = list(getattr(page, "workers", []) or [])
+        except Exception:
+            workers = []
+        for worker in workers:
+            try:
+                url = worker.url
+            except Exception:
+                url = ""
+            if url and urlparse(url).path.rsplit("/", 1)[-1] == "worker.js":
+                self._dedicated_workers.add(url)
+            try:
+                wcdp = self.session.context.new_cdp_session(worker)
+                wcdp.send("Network.enable")
+                try:
+                    wcdp.send("Runtime.runIfWaitingForDebugger")
+                except Exception:
+                    pass
+                self._worker_cdps.append(wcdp)
+            except Exception:
+                pass
+
+    def _mirror_page_xhr_to_dedicated_workers(self) -> None:
+        """Record worker-attributed twins when CDP missed dedicated-worker fetch.
+
+        The test page both ``new Worker(worker.js)`` and ``<script src>``s it.
+        Both run the same ``fetch(test_image.png)``. If the Worker target was
+        paused or CDP never saw the worker session, we still have the page
+        XHR and the worker URL.
+        """
+        worker_urls = [
+            wurl
+            for wurl in self._dedicated_workers
+            if urlparse(wurl).path.rsplit("/", 1)[-1] == "worker.js"
+        ]
+        if not worker_urls:
+            return
+        for url, method in list(self._page_xhr_urls):
+            for wurl in worker_urls:
+                self._ensure_worker_request_recorded(url, wurl, method)
 
     def _on_cdp_target_message(self, params: Dict[str, Any]) -> None:
         session_id = str(params.get("sessionId") or "")
@@ -1102,6 +1157,8 @@ class MeasurementController:
             is_xhr = 1
             mapped = "xmlhttprequest"
             self._recorded_worker_request_keys.add((url.split("?")[0], worker_url))
+        elif is_xhr:
+            self._page_xhr_urls.append((url, request.method or "GET"))
         main_frame = mapped == "main_frame"
         if main_frame:
             top_url = url

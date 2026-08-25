@@ -149,8 +149,15 @@ class BrowseCommand(BaseCommand):
             )
 
             try:
-                links[r].click()
-                wait_until_loaded(webdriver, 300)
+                # goto() rather than ElementHandle.click(): click() waits up
+                # to 30s for actionability and is what timed out browse
+                # under xvfb. The HTTP tables need the navigation, not the
+                # pointer event.
+                if href:
+                    webdriver.get(href)
+                else:
+                    links[r].click()
+                wait_until_loaded(webdriver, 30)
                 time.sleep(max(1, self.sleep))
                 persist_click = getattr(
                     extension_socket, "persist_http_responses", None
@@ -162,8 +169,8 @@ class BrowseCommand(BaseCommand):
                         logger.debug("persist_http_responses failed", exc_info=True)
                 if browser_params.bot_mitigation:
                     bot_mitigation(webdriver)
-                webdriver.back()
-                wait_until_loaded(webdriver, 300)
+                webdriver.get(self.url)
+                wait_until_loaded(webdriver, 30)
             except Exception as e:
                 logger.error(
                     "BROWSER %i: Error visiting internal link %s",
