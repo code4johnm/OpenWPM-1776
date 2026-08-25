@@ -21,7 +21,22 @@ from .utils.page_utils import (
 NUM_MOUSE_MOVES = 10
 RANDOM_SLEEP_LOW = 1
 RANDOM_SLEEP_HIGH = 7
+# Intra-link goto. BrowserSession.get swallows PWTimeout; 30s + 30s
+# wait_until_loaded ate the 60s BrowseCommand budget under xvfb.
+_BROWSE_NAV_TIMEOUT_MS = 8000
 logger = logging.getLogger("openwpm")
+
+
+def _persist_http_responses(extension_socket, snapshot_history: bool = True) -> None:
+    persist = getattr(extension_socket, "persist_http_responses", None)
+    if not callable(persist):
+        return
+    try:
+        persist(snapshot_history=snapshot_history)
+    except TypeError:
+        persist()
+    except Exception:
+        logger.debug("persist_http_responses failed", exc_info=True)
 
 
 def bot_mitigation(session: BrowserSession) -> None:
@@ -96,12 +111,7 @@ class GetCommand(BaseCommand):
         if self.sleep:
             time.sleep(self.sleep)
 
-        persist = getattr(extension_socket, "persist_http_responses", None)
-        if callable(persist):
-            try:
-                persist()
-            except Exception:
-                logger.debug("persist_http_responses failed", exc_info=True)
+        _persist_http_responses(extension_socket)
 
         close_other_windows(webdriver)
 
@@ -168,22 +178,19 @@ class BrowseCommand(BaseCommand):
                 # goto() rather than ElementHandle.click(): click() waits up
                 # to 30s for actionability and is what timed out browse
                 # under xvfb. The HTTP tables need the navigation, not the
-                # pointer event.
-                webdriver.get(href)
-                wait_until_loaded(webdriver, 30)
+                # pointer event. Bound goto so one hung xvfb nav cannot
+                # consume the 60s command timeout before simple_c is visited.
+                webdriver.get(href, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                landed = urlparse(getattr(webdriver, "current_url", "") or "")
+                wanted = urlparse(href)
+                if landed.path.rstrip("/") != wanted.path.rstrip("/"):
+                    webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                    continue
                 time.sleep(max(1, self.sleep))
-                persist_click = getattr(
-                    extension_socket, "persist_http_responses", None
-                )
-                if callable(persist_click):
-                    try:
-                        persist_click()
-                    except Exception:
-                        logger.debug("persist_http_responses failed", exc_info=True)
+                _persist_http_responses(extension_socket, snapshot_history=False)
                 if browser_params.bot_mitigation:
                     bot_mitigation(webdriver)
-                webdriver.get(self.url)
-                wait_until_loaded(webdriver, 30)
+                webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
             except Exception as e:
                 logger.error(
                     "BROWSER %i: Error visiting internal link %s",
@@ -192,17 +199,11 @@ class BrowseCommand(BaseCommand):
                     exc_info=e,
                 )
                 try:
-                    webdriver.get(self.url)
-                    wait_until_loaded(webdriver, 300)
+                    webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
                 except Exception:
                     break
 
-        persist = getattr(extension_socket, "persist_http_responses", None)
-        if callable(persist):
-            try:
-                persist()
-            except Exception:
-                logger.debug("persist_http_responses failed", exc_info=True)
+        _persist_http_responses(extension_socket)
 
 
 class SaveScreenshotCommand(BaseCommand):

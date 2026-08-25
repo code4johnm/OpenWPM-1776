@@ -384,7 +384,7 @@ class MeasurementController:
         )
         self.visit_id = None
 
-    def persist_http_responses(self) -> None:
+    def persist_http_responses(self, snapshot_history: bool = True) -> None:
         """Flush queued http_responses on the command thread after navigation."""
         self._collect_playwright_workers()
         self._resume_auto_attached_targets()
@@ -392,7 +392,8 @@ class MeasurementController:
         self._flush_pending_cdp_worker_requests()
         self._mirror_page_xhr_to_dedicated_workers()
         self._flush_pending_responses()
-        self._snapshot_history_safe()
+        if snapshot_history:
+            self._snapshot_history_safe()
 
     def _note_visited_url(self, url: Optional[str]) -> None:
         if not url or url.startswith(
