@@ -263,7 +263,9 @@ class MeasurementController:
         self._cdp_msg_id = 1000
         self._pending_auto_attach: List[Dict[str, Any]] = []
         self._paused_session_ids: set = set()
+        self._resume_after_enable: Dict[int, str] = {}
         self._pending_content_responses: Dict[str, Any] = {}
+        self._navigated_urls: set = set()
         self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
@@ -386,14 +388,32 @@ class MeasurementController:
         self._flush_pending_responses()
         self._snapshot_history_safe()
 
+    def _note_visited_url(self, url: Optional[str]) -> None:
+        if not url or url.startswith(
+            ("about:", "chrome:", "devtools:", "data:", "blob:")
+        ):
+            return
+        self._navigated_urls.add(url)
+
     def _snapshot_history_safe(self) -> None:
+        try:
+            page = self.session.page
+            if page is not None:
+                self._note_visited_url(page.url)
+        except Exception:
+            pass
+        self._note_visited_url(self._current_top_url)
         profile_path = getattr(self.browser_params, "profile_path", None)
         if profile_path is None:
             return
         try:
-            from ..commands.utils.firefox_profile import snapshot_chromium_history
+            from ..commands.utils.firefox_profile import (
+                merge_visit_urls_into_history,
+                snapshot_chromium_history,
+            )
 
             snapshot_chromium_history(profile_path)
+            merge_visit_urls_into_history(profile_path, self._navigated_urls)
         except Exception:
             logger.debug(
                 "BROWSER %i: History snapshot failed",
@@ -599,24 +619,14 @@ class MeasurementController:
                     "Target.receivedMessageFromTarget",
                     self._on_cdp_target_message,
                 )
-                auto_attach = {
-                    "autoAttach": True,
-                    "waitForDebuggerOnStart": True,
-                    "flatten": False,
-                    # Pause dedicated workers only. Iframes must not wait
-                    # or document/CSS capture and page load hang.
-                    "filter": [
-                        {"type": "worker"},
-                        {"type": "service_worker"},
-                        {"type": "shared_worker"},
-                    ],
-                }
-                try:
-                    cdp.send("Target.setAutoAttach", auto_attach)
-                except Exception:
-                    auto_attach.pop("filter", None)
-                    auto_attach["waitForDebuggerOnStart"] = False
-                    cdp.send("Target.setAutoAttach", auto_attach)
+                cdp.send(
+                    "Target.setAutoAttach",
+                    {
+                        "autoAttach": True,
+                        "waitForDebuggerOnStart": True,
+                        "flatten": False,
+                    },
+                )
             except Exception:
                 logger.debug(
                     "BROWSER %i: Target.setAutoAttach failed",
@@ -632,13 +642,12 @@ class MeasurementController:
 
     def _send_to_target(
         self, session_id: str, method: str, params: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> Optional[int]:
         if self._cdp is None or not session_id:
-            return
+            return None
         self._cdp_msg_id += 1
-        message = json.dumps(
-            {"id": self._cdp_msg_id, "method": method, "params": params or {}}
-        )
+        msg_id = self._cdp_msg_id
+        message = json.dumps({"id": msg_id, "method": method, "params": params or {}})
         try:
             self._cdp.send(
                 "Target.sendMessageToTarget",
@@ -651,10 +660,10 @@ class MeasurementController:
                 method,
                 exc_info=True,
             )
+            return None
+        return msg_id
 
     def _on_cdp_attached_to_target(self, params: Dict[str, Any]) -> None:
-        # Do not cdp.send() here except to unblock non-worker targets.
-        # send() from a CDP handler can stall the sync dispatcher.
         self._pending_auto_attach.append(params)
         info = params.get("targetInfo") or {}
         session_id = str(params.get("sessionId") or "")
@@ -665,16 +674,18 @@ class MeasurementController:
                 self._dedicated_workers.add(url)
             if session_id:
                 self._cdp_session_worker_url[session_id] = url
-                self._paused_session_ids.add(session_id)
-            return
-        if ttype in ("service_worker", "shared_worker"):
-            if url:
-                self._dedicated_workers.add(url)
+                enable_id = self._send_to_target(session_id, "Network.enable")
+                if enable_id is not None:
+                    self._resume_after_enable[enable_id] = session_id
+                    self._paused_session_ids.add(session_id)
+                    return
+        elif ttype in ("service_worker", "shared_worker"):
             if session_id:
                 self._cdp_session_worker_url[session_id] = url
                 self._send_to_target(session_id, "Network.enable")
         if session_id:
             self._send_to_target(session_id, "Runtime.runIfWaitingForDebugger")
+            self._paused_session_ids.discard(session_id)
 
     def _resume_auto_attached_targets(self) -> None:
         """Enable Network on paused workers, then resume them (command thread)."""
@@ -704,6 +715,12 @@ class MeasurementController:
         try:
             msg = json.loads(params.get("message") or "{}")
         except Exception:
+            return
+        reply_id = msg.get("id")
+        if reply_id in self._resume_after_enable:
+            paused = self._resume_after_enable.pop(reply_id)
+            self._send_to_target(paused, "Runtime.runIfWaitingForDebugger")
+            self._paused_session_ids.discard(paused)
             return
         method = msg.get("method") or ""
         inner = msg.get("params") or {}
@@ -987,10 +1004,16 @@ class MeasurementController:
 
     def _worker_url(self, request: Request) -> Optional[str]:
         resource = (getattr(request, "resource_type", None) or "").lower()
+        req_name = urlparse(request.url).path.rsplit("/", 1)[-1]
+        # The worker/SW *script* load is a page request.
+        if req_name in {"worker.js", "service_worker.js"} and resource in (
+            "script",
+            "document",
+            "",
+        ):
+            return None
         try:
             worker = getattr(request, "service_worker", None)
-            # The SW *script* load exposes service_worker but is a page
-            # request; only attribute non-document fetches to the worker.
             if worker is not None and resource not in ("script", "document"):
                 return worker.url
         except Exception:
@@ -1002,20 +1025,17 @@ class MeasurementController:
             frame_missing = True
         init_url = self._cdp_initiators.get(request.url) or ""
         init_type = (self._cdp_initiator_types.get(request.url) or "").lower()
+        init_name = urlparse(init_url).path.rsplit("/", 1)[-1] if init_url else ""
         # Dedicated-worker fetch: CDP initiator.type is "worker" even when
         # Playwright still exposes the page frame (the page also
-        # <script src>s worker.js).
-        if init_type == "worker":
-            if init_url:
-                return init_url
-            if self._dedicated_workers:
-                return next(iter(self._dedicated_workers))
-        if frame_missing and (
-            "worker.js" in init_url or "service_worker.js" in init_url
-        ):
+        # <script src>s worker.js). Do not treat service_worker.js as
+        # worker.js — the latter is a substring of the former.
+        if init_type == "worker" and init_name == "worker.js":
+            return init_url
+        if frame_missing and init_name in {"worker.js", "service_worker.js"}:
             return init_url
         if frame_missing and self._dedicated_workers:
-            if resource != "document":
+            if resource not in ("document", "script"):
                 if init_url and init_url in self._dedicated_workers:
                     return init_url
                 return next(iter(self._dedicated_workers))
@@ -1086,6 +1106,7 @@ class MeasurementController:
         if main_frame:
             top_url = url
             self._current_top_url = url
+            self._note_visited_url(url)
             triggering = "undefined"
             loading_origin = "undefined"
             loading_href = "undefined"
@@ -1094,7 +1115,11 @@ class MeasurementController:
             triggering = _origin(worker_url)
             loading_origin = triggering
             loading_href = worker_url
-        elif worker_url and "worker.js" in worker_url and is_xhr:
+        elif (
+            worker_url
+            and urlparse(worker_url).path.rsplit("/", 1)[-1] == "worker.js"
+            and is_xhr
+        ):
             top_url = worker_url
             triggering = _origin(worker_url)
             loading_origin = triggering
@@ -1549,6 +1574,9 @@ class MeasurementController:
         if not url or url.startswith("chrome://") or url.startswith("devtools://"):
             return
         parent = frame.parent_frame
+        if parent is None:
+            self._note_visited_url(url)
+            self._current_top_url = url
         try:
             page = frame.page
             viewport = page.viewport_size or {"width": 1366, "height": 768}

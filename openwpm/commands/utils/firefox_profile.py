@@ -7,7 +7,7 @@ import sqlite3
 import time
 from glob import glob
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Iterable, List, Optional, Union
 
 # Chromium overwrites Default/History on quit. Keep a side copy at the
 # profile root so dump can restore a queryable ``urls`` table.
@@ -213,6 +213,66 @@ def snapshot_chromium_history(profile_dir: Union[str, Path]) -> None:
             continue
         if _replace_history(src, dest) and _sqlite_url_count(dest) > 0:
             return
+
+
+def merge_visit_urls_into_history(
+    profile_dir: Union[str, Path], urls: Iterable[str]
+) -> None:
+    """Ensure ``openwpm-history.sqlite`` contains each visited URL.
+
+    Playwright Chromium often leaves ``Default/History`` with no ``urls``
+    table. The crawl still knows which documents it opened; write those
+    into the snapshot Chromium will not overwrite.
+    """
+    incoming: List[str] = []
+    seen = set()
+    for raw in urls:
+        url = (raw or "").strip()
+        if not url or url.startswith(
+            ("about:", "chrome:", "devtools:", "data:", "blob:")
+        ):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        incoming.append(url)
+    if not incoming:
+        return
+    root = Path(profile_dir)
+    dest = root / OPENWPM_HISTORY_SNAPSHOT
+    existing: List[str] = []
+    if _sqlite_url_count(dest) > 0:
+        try:
+            con = sqlite3.connect(
+                f"file:{dest.as_posix()}?mode=ro", uri=True, timeout=5
+            )
+            try:
+                existing = [str(row[0]) for row in con.execute("SELECT url FROM urls")]
+            finally:
+                con.close()
+        except sqlite3.Error:
+            existing = []
+    merged: List[str] = []
+    seen_merged = set()
+    for url in existing + incoming:
+        if url in seen_merged:
+            continue
+        seen_merged.add(url)
+        merged.append(url)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".openwpm-visits")
+    if tmp.exists():
+        tmp.unlink()
+    con = sqlite3.connect(tmp)
+    try:
+        con.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT UNIQUE)")
+        con.executemany(
+            "INSERT OR IGNORE INTO urls (url) VALUES (?)", [(url,) for url in merged]
+        )
+        con.commit()
+    finally:
+        con.close()
+    tmp.replace(dest)
 
 
 def materialize_chromium_history(profile_dir: Union[str, Path]) -> None:

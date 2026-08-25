@@ -152,6 +152,14 @@ class BrowseCommand(BaseCommand):
                 links[r].click()
                 wait_until_loaded(webdriver, 300)
                 time.sleep(max(1, self.sleep))
+                persist_click = getattr(
+                    extension_socket, "persist_http_responses", None
+                )
+                if callable(persist_click):
+                    try:
+                        persist_click()
+                    except Exception:
+                        logger.debug("persist_http_responses failed", exc_info=True)
                 if browser_params.bot_mitigation:
                     bot_mitigation(webdriver)
                 webdriver.back()

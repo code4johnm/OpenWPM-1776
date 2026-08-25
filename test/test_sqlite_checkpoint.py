@@ -11,6 +11,7 @@ from openwpm.commands.utils.firefox_profile import (
     OPENWPM_HISTORY_SNAPSHOT,
     checkpoint_chromium_sqlite,
     materialize_chromium_history,
+    merge_visit_urls_into_history,
     snapshot_chromium_history,
 )
 
@@ -108,3 +109,15 @@ def test_materialize_prefers_snapshot_over_empty_urls_table(tmp_path: Path) -> N
     rows = list(con.execute("SELECT url FROM urls"))
     con.close()
     assert rows == [("http://example.com/kept",)]
+
+
+def test_merge_visit_urls_then_materialize(tmp_path: Path) -> None:
+    merge_visit_urls_into_history(
+        tmp_path, ["http://google.com/", "about:blank", "http://google.com/"]
+    )
+    materialize_chromium_history(tmp_path)
+    dest = tmp_path / "Default" / "History"
+    con = sqlite3.connect(dest)
+    rows = list(con.execute("SELECT url FROM urls"))
+    con.close()
+    assert rows == [("http://google.com/",)]
