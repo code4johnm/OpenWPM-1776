@@ -159,6 +159,11 @@ class TaskManager:
             target=self._mark_command_sequences_complete, args=()
         )
         self.callback_thread.name = "OpenWPM-completion_handler"
+        # Non-daemon: a test that skips close() (or whose close never sets
+        # closing) keeps pytest alive after the terminal summary. Groups 4/5
+        # on 89ac37a printed results in ~7m then sat in the GHA cgroup until
+        # timeout-minutes.
+        self.callback_thread.daemon = True
         self.callback_thread.start()
 
     def __enter__(self):
@@ -332,7 +337,7 @@ class TaskManager:
         self.storage_controller_handle.shutdown(relaxed=relaxed)
         self.logging_server.close()
         if hasattr(self, "callback_thread"):
-            self.callback_thread.join()
+            self.callback_thread.join(30)
 
     def _check_failure_status(self) -> None:
         """Check the status of command failures. Raise exceptions as necessary
@@ -395,20 +400,21 @@ class TaskManager:
         and calls their callbacks
         """
         while True:
-            if self.closing and not self.unsaved_command_sequences:
-                # we're shutting down and have no unprocessed callbacks
-                break
-
             visit_id_list = self.storage_controller_handle.get_new_completed_visits()
-            if not visit_id_list:
-                time.sleep(1)
-                continue
-
             for visit_id, successful in visit_id_list:
                 self.logger.debug("Invoking callback of visit_id %d", visit_id)
                 cs = self.unsaved_command_sequences.pop(visit_id, None)
                 if cs:
                     cs.mark_done(successful)
+
+            if self.closing and not self.unsaved_command_sequences:
+                break
+            if self.closing:
+                # Storage is already shutting down; do not wait forever for
+                # callbacks that will never arrive (blocks pytest exit).
+                break
+            if not visit_id_list:
+                time.sleep(1)
 
     def execute_command_sequence(
         self, command_sequence: CommandSequence, index: Optional[int] = None

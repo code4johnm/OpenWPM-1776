@@ -10,6 +10,10 @@ BASE_TEST_URL_DOMAIN = "localhost"
 BASE_TEST_URL_NOPATH = "http://%s:%s" % (BASE_TEST_URL_DOMAIN, LOCAL_WEBSERVER_PORT)
 BASE_TEST_URL = "%s/test_pages" % BASE_TEST_URL_NOPATH
 BASE_TEST_URL_NOSCHEME = BASE_TEST_URL.split("//")[1]
+# Playwright/Chromium navigates schemeless "example.com"; Selenium refused
+# it. Connection-refused is a GetCommand neterror that still counts toward
+# failure_limit (NXDOMAIN does not).
+COMMAND_FAILURE_URL = "http://127.0.0.1:1/"
 
 
 class MyTCPServer(socketserver.TCPServer):

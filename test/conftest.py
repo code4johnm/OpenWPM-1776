@@ -151,11 +151,13 @@ TaskManagerCreator: TypeAlias = Callable[[FullConfig], Tuple[TaskManager, Path]]
 
 
 @pytest.fixture()
-def task_manager_creator(server: None, chromium_installed: None) -> TaskManagerCreator:
-    """We create a callable that returns a TaskManager that has
-    been configured with the Manager and BrowserParams"""
+def task_manager_creator(
+    server: None, chromium_installed: None
+) -> Generator[TaskManagerCreator, Any, None]:
+    """Return a factory that builds a TaskManager and closes leftovers."""
 
-    # We need to create the fixtures like this because usefixtures doesn't work on fixtures
+    managers: List[TaskManager] = []
+
     def _create_task_manager(params: FullConfig) -> Tuple[TaskManager, Path]:
         manager_params, browser_params = params
         db_path = manager_params.data_directory / "crawl-data.sqlite"
@@ -166,9 +168,17 @@ def task_manager_creator(server: None, chromium_installed: None) -> TaskManagerC
             structured_provider,
             None,
         )
+        managers.append(manager)
         return manager, db_path
 
-    return _create_task_manager
+    yield _create_task_manager
+    for manager in managers:
+        if getattr(manager, "closing", False):
+            continue
+        try:
+            manager.close()
+        except Exception:
+            pass
 
 
 class HttpParams(Protocol):

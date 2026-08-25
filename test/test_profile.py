@@ -15,7 +15,7 @@ from openwpm.errors import CommandExecutionError, ProfileLoadError
 from openwpm.utilities import db_utils
 
 from . import openwpmtest
-from .utilities import BASE_TEST_URL
+from .utilities import BASE_TEST_URL, COMMAND_FAILURE_URL
 
 # TODO update these tests to make use of blocking commands
 
@@ -72,12 +72,17 @@ def test_crash_profile(default_params, task_manager_creator):
     manager, _ = task_manager_creator((manager_params, browser_params[:1]))
     try:
         manager.get(BASE_TEST_URL)  # So we have a profile
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Requires two commands to shut down
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
     except CommandExecutionError:
         pass
+    finally:
+        try:
+            manager.close()
+        except CommandExecutionError:
+            pass
     assert (browser_params[0].profile_archive_dir / "profile.tar.gz").is_file()
 
 
