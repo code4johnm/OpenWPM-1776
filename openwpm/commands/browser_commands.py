@@ -5,6 +5,7 @@ import os
 import random
 import time
 from hashlib import md5
+from urllib.parse import urljoin, urlparse
 
 from ..browser import BrowserError, BrowserSession, NetError
 from ..config import BrowserParams, ManagerParams
@@ -133,16 +134,31 @@ class BrowseCommand(BaseCommand):
             extension_socket,
         )
 
+        start = urlparse(self.url)
+        seen_hrefs = set()
         for _ in range(self.num_links):
-            links = [
-                x
-                for x in get_intra_links(webdriver, self.url)
-                if is_displayed(x) is True
-            ]
-            if not links:
+            candidates = []
+            for elem in get_intra_links(webdriver, self.url):
+                if is_displayed(elem) is not True:
+                    continue
+                raw = elem.get_attribute("href")
+                if not raw:
+                    continue
+                abs_url = urljoin(self.url, raw)
+                dest = urlparse(abs_url)
+                if dest.scheme not in ("http", "https"):
+                    continue
+                # Same host only. eTLD+1 is None for localhost, so
+                # example.com / google.com must not count as intra-site.
+                if dest.hostname != start.hostname:
+                    continue
+                if abs_url in seen_hrefs:
+                    continue
+                candidates.append(abs_url)
+            if not candidates:
                 break
-            r = int(random.random() * len(links))
-            href = links[r].get_attribute("href")
+            href = candidates[int(random.random() * len(candidates))]
+            seen_hrefs.add(href)
             logger.info(
                 "BROWSER %i: visiting internal link %s"
                 % (browser_params.browser_id, href)
@@ -153,10 +169,7 @@ class BrowseCommand(BaseCommand):
                 # to 30s for actionability and is what timed out browse
                 # under xvfb. The HTTP tables need the navigation, not the
                 # pointer event.
-                if href:
-                    webdriver.get(href)
-                else:
-                    links[r].click()
+                webdriver.get(href)
                 wait_until_loaded(webdriver, 30)
                 time.sleep(max(1, self.sleep))
                 persist_click = getattr(

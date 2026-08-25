@@ -70,7 +70,11 @@ def wait_until_loaded(
 
 
 def get_intra_links(session: BrowserSession, url: str) -> List[SessionElement]:
-    ps1 = du.get_ps_plus_1(url)
+    start = urlparse.urlparse(url)
+    try:
+        ps1 = du.get_ps_plus_1(url)
+    except Exception:
+        ps1 = None
     links = []
     for elem in session.find_elements(By.TAG_NAME, "a"):
         href = elem.get_attribute("href")
@@ -78,6 +82,14 @@ def get_intra_links(session: BrowserSession, url: str) -> List[SessionElement]:
             continue
         full_href = urlparse.urljoin(url, href)
         if not full_href.startswith("http"):
+            continue
+        dest = urlparse.urlparse(full_href)
+        if dest.hostname == start.hostname:
+            links.append(elem)
+            continue
+        # Cross-host: require a real eTLD+1 match. localhost has none, so
+        # example.com / google.com must not count as intra-site.
+        if not ps1:
             continue
         try:
             if du.get_ps_plus_1(full_href) == ps1:
