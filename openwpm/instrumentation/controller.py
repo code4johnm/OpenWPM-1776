@@ -166,6 +166,9 @@ class MeasurementController:
         self._request_ids: Dict[str, int] = {}
         self._next_request_id = 1
         self._cdp_by_url: Dict[str, Dict[str, Any]] = {}
+        self._cdp_id_to_url: Dict[str, str] = {}
+        self._cdp_cache_ids: set = set()
+        self._dedicated_workers: set = set()
         self._seen_dns: set = set()
         self._cookie_keys: set = set()
         self._cdp = None
@@ -201,11 +204,16 @@ class MeasurementController:
         if self.browser_params.http_instrument:
             context.on("request", self._on_request)
             context.on("response", self._on_response)
+            page.on("worker", self._on_worker)
+
+        if self.browser_params.http_instrument or self.browser_params.dns_instrument:
             context.on("requestfailed", self._on_request_failed)
 
         if self.browser_params.navigation_instrument:
             context.on("page", self._on_new_page)
             page.on("framenavigated", self._on_frame_navigated)
+        elif self.browser_params.http_instrument:
+            context.on("page", self._on_new_page)
 
         if self.browser_params.cookie_instrument:
             self._snapshot_cookies("manual-export")
@@ -433,6 +441,7 @@ class MeasurementController:
             cdp = self.session.context.new_cdp_session(page)
             cdp.on("Network.requestWillBeSent", self._on_cdp_request)
             cdp.on("Network.responseReceived", self._on_cdp_response)
+            cdp.on("Network.requestServedFromCache", self._on_cdp_served_from_cache)
             cdp.on("Network.loadingFailed", self._on_cdp_loading_failed)
             if self.browser_params.cookie_instrument:
                 cdp.on("Network.cookieChanged", self._on_cdp_cookie)
@@ -447,26 +456,64 @@ class MeasurementController:
     def _on_cdp_request(self, params: Dict[str, Any]) -> None:
         request = params.get("request") or {}
         url = request.get("url") or ""
+        rid = params.get("requestId") or ""
         initiator = params.get("initiator") or {}
-        init_url = initiator.get("url") or ""
+        init_url = _cdp_initiator_url(initiator)
         if url:
             self._cdp_initiators[url] = init_url
+        if rid and url:
+            self._cdp_id_to_url[rid] = url
+        redirect = params.get("redirectResponse")
+        if redirect and self.browser_params.dns_instrument:
+            # Chrome keeps requestId stable across hops; record the
+            # completed redirect so the chain can be reconstructed.
+            old_url = redirect.get("url") or url
+            self._record_dns(
+                url=old_url,
+                request_key=rid or old_url,
+                used_address=redirect.get("remoteIPAddress"),
+                error=None,
+            )
+
+    def _on_cdp_served_from_cache(self, params: Dict[str, Any]) -> None:
+        rid = params.get("requestId") or ""
+        if not rid:
+            return
+        self._cdp_cache_ids.add(rid)
+        url = self._cdp_id_to_url.get(rid) or ""
+        if not url:
+            return
+        rec = self._cdp_by_url.setdefault(url, {})
+        rec["fromDiskCache"] = True
+        rec["fromCache"] = True
+        rec["requestId"] = rid
 
     def _on_cdp_response(self, params: Dict[str, Any]) -> None:
         response = params.get("response") or {}
         url = response.get("url") or ""
+        rid = params.get("requestId")
+        prev = self._cdp_by_url.get(url) or {}
+        from_cache = (
+            bool(response.get("fromDiskCache"))
+            or bool(response.get("fromPrefetchCache"))
+            or bool(prev.get("fromCache"))
+            or (bool(rid) and rid in self._cdp_cache_ids)
+        )
         self._cdp_by_url[url] = {
-            "fromDiskCache": bool(response.get("fromDiskCache")),
+            "fromDiskCache": from_cache,
             "fromPrefetchCache": bool(response.get("fromPrefetchCache")),
             "fromServiceWorker": bool(response.get("fromServiceWorker")),
             "remoteIPAddress": response.get("remoteIPAddress"),
-            "requestId": params.get("requestId"),
+            "requestId": rid,
             "status": response.get("status"),
+            "fromCache": from_cache or bool(prev.get("fromCache")),
         }
+        if rid and url:
+            self._cdp_id_to_url[str(rid)] = url
         if self.browser_params.dns_instrument and url:
             self._record_dns(
                 url=url,
-                request_key=params.get("requestId") or url,
+                request_key=rid or url,
                 used_address=response.get("remoteIPAddress"),
                 error=None,
             )
@@ -479,19 +526,21 @@ class MeasurementController:
             not is_dns_failure_message(error_text)
             and "NAME_NOT_RESOLVED" not in error_text
         ):
-            # Still record DNS rows for NXDOMAIN; skip other failures here
-            # (HTTP instrument records the failed request separately).
-            if "NAME_NOT_RESOLVED" not in error_text:
-                return
-        # request URL is not always present; fall back to requestId only
-        url = ""
+            return
         req_id = params.get("requestId") or ""
+        url = self._cdp_id_to_url.get(req_id) or ""
+        hostname_hint = None
+        if url:
+            try:
+                hostname_hint = urlparse(url).hostname
+            except Exception:
+                hostname_hint = None
         self._record_dns(
             url=url,
-            request_key=req_id,
+            request_key=req_id or url,
             used_address=None,
             error=neterror_code(error_text) or error_text,
-            hostname_hint=None,
+            hostname_hint=hostname_hint,
         )
 
     def _on_cdp_cookie(self, params: Dict[str, Any]) -> None:
@@ -518,6 +567,14 @@ class MeasurementController:
         except Exception:
             return None
 
+    def _on_worker(self, worker: Any) -> None:
+        try:
+            url = worker.url
+        except Exception:
+            url = ""
+        if url:
+            self._dedicated_workers.add(url)
+
     def _worker_url(self, request: Request) -> Optional[str]:
         try:
             worker = getattr(request, "service_worker", None)
@@ -525,9 +582,20 @@ class MeasurementController:
                 return worker.url
         except Exception:
             pass
+        frame_missing = False
+        try:
+            request.frame
+        except Exception:
+            frame_missing = True
         init_url = self._cdp_initiators.get(request.url) or ""
         if "worker.js" in init_url or "service_worker.js" in init_url:
             return init_url
+        if frame_missing and self._dedicated_workers:
+            resource = (getattr(request, "resource_type", None) or "").lower()
+            if resource != "document":
+                if init_url and init_url in self._dedicated_workers:
+                    return init_url
+                return next(iter(self._dedicated_workers))
         return None
 
     def _record_request(self, request: Request) -> None:
@@ -720,9 +788,21 @@ class MeasurementController:
                 return
         request = response.request
         request_id = self._rid(_req_key(request))
+        try:
+            response.finished()
+        except Exception:
+            pass
         extra = self._cdp_by_url.get(url, {})
+        cdp_rid = extra.get("requestId")
         from_cache = (
-            1 if extra.get("fromDiskCache") or extra.get("fromPrefetchCache") else 0
+            1
+            if (
+                extra.get("fromDiskCache")
+                or extra.get("fromPrefetchCache")
+                or extra.get("fromCache")
+                or (cdp_rid and cdp_rid in self._cdp_cache_ids)
+            )
+            else 0
         )
         header_pairs = _header_pairs_from_playwright(response)
         headers = {k.lower(): v for k, v in header_pairs}
@@ -771,7 +851,10 @@ class MeasurementController:
         err = ""
         try:
             failure = request.failure
-            err = failure or ""
+            if isinstance(failure, dict):
+                err = str(failure.get("errorText") or failure)
+            else:
+                err = failure or ""
         except Exception:
             err = ""
         if self.browser_params.dns_instrument and is_dns_failure_message(err):
@@ -781,6 +864,29 @@ class MeasurementController:
                 used_address=None,
                 error=neterror_code(err) or "dnsNotFound",
             )
+
+    def _cdp_response_body(self, url: str) -> Optional[bytes]:
+        rec = self._cdp_by_url.get(url) or {}
+        rid = rec.get("requestId")
+        if not rid or self._cdp is None:
+            return None
+        try:
+            result = self._cdp.send("Network.getResponseBody", {"requestId": rid})
+        except Exception:
+            return None
+        if not result:
+            return None
+        payload = result.get("body")
+        if payload is None:
+            return None
+        if result.get("base64Encoded"):
+            try:
+                return base64.b64decode(payload)
+            except Exception:
+                return None
+        if isinstance(payload, (bytes, bytearray)):
+            return bytes(payload)
+        return str(payload).encode("utf-8", errors="replace")
 
     def _maybe_save_body(self, response: Response, request_id: int) -> Optional[str]:
         option = self.browser_params.save_content
@@ -801,8 +907,19 @@ class MeasurementController:
         else:
             return None
         try:
-            body = response.body()
+            response.finished()
         except Exception:
+            pass
+        body: Optional[bytes] = None
+        try:
+            raw = response.body()
+            if raw is not None:
+                body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+        except Exception:
+            body = None
+        if body is None:
+            body = self._cdp_response_body(response.url)
+        if not body:
             return None
         digest = hashlib.sha256(body).hexdigest()
         b64 = base64.b64encode(body).decode("ascii")
@@ -933,7 +1050,10 @@ class MeasurementController:
 
     # --- navigation -----------------------------------------------------
     def _on_new_page(self, page: Page) -> None:
-        page.on("framenavigated", self._on_frame_navigated)
+        if self.browser_params.http_instrument:
+            page.on("worker", self._on_worker)
+        if self.browser_params.navigation_instrument:
+            page.on("framenavigated", self._on_frame_navigated)
         if self.browser_params.http_instrument and self._cdp is None:
             try:
                 self._attach_cdp(page)
@@ -979,6 +1099,20 @@ class MeasurementController:
                 "committed_time_stamp": _utc_now(),
             },
         )
+
+
+def _cdp_initiator_url(initiator: Dict[str, Any]) -> str:
+    url = initiator.get("url") or ""
+    if url:
+        return url
+    stack: Any = initiator.get("stack")
+    while stack:
+        for frame in stack.get("callFrames") or []:
+            frame_url = frame.get("url") or ""
+            if frame_url:
+                return frame_url
+        stack = stack.get("parent")
+    return ""
 
 
 def _req_key(request: Any) -> str:

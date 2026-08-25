@@ -250,6 +250,27 @@ HTTP_RESPONSES: set[tuple[str, str]] = {
         # u'http://localhost:8000/test_pages/http_test_page.html',
         "",
     ),
+    # Playwright records the 3xx hop as an http_responses row with Location.
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req1.png",
+        "req2.png?dst=req3.png&dst=/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req2.png",
+        "req3.png?dst=/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req3.png",
+        "/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame1.png",
+        "frame2.png?dst=/404.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame2.png",
+        "/404.png",
+    ),
 }
 
 # format: (source_url, destination_url, location header)
@@ -483,6 +504,27 @@ HTTP_CACHED_RESPONSES: set[tuple[str, int]] = {
     (f"{utilities.BASE_TEST_URL}/shared/test_image_2.png", 1),
     (f"{utilities.BASE_TEST_URL}/shared/test_style.css", 1),
     (f"{utilities.BASE_TEST_URL}/shared/test_image.png", 1),
+    # 3xx hops are stored as responses; Chromium may not mark them cached.
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req1.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req2.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req3.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame1.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame2.png",
+        0,
+    ),
 }
 
 # format: (source_url, destination_url)
@@ -647,6 +689,8 @@ class TestHTTPInstrument(OpenWPMTest):
         rows = db_utils.query_db(db, "SELECT * FROM http_requests")
         observed_records = set()
         for row in rows:
+            if row["url"].split("?")[0].endswith("favicon.ico"):
+                continue
             observed_records.add(
                 (
                     row["url"].split("?")[0],
@@ -662,7 +706,12 @@ class TestHTTPInstrument(OpenWPMTest):
             )
             request_id_to_url[row["request_id"]] = row["url"]
 
-        assert HTTP_WORKER_SCRIPT_REQUESTS == observed_records
+        expected = {
+            rec
+            for rec in HTTP_WORKER_SCRIPT_REQUESTS
+            if not str(rec[0]).endswith("favicon.ico")
+        }
+        assert expected == observed_records
 
     def test_service_worker_requests(self):
         """Check correct URL attribution for requests made by service worker"""

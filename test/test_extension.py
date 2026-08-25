@@ -149,7 +149,8 @@ JS_STACK_TEST_URL = "%s/js_call_stack.html" % utilities.BASE_TEST_URL
 JS_STACK_TEST_SCRIPT_URL = "%s/stack.js" % utilities.BASE_TEST_URL
 
 # Chromium V8 line/column and eval-site numbers (inline scripts are
-# 1-indexed from the script block, not the HTML file).
+# 1-indexed from the script block, not the HTML file). Chromium has no
+# navigator.buildID, so that Firefox-only eval get is omitted.
 JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
@@ -179,16 +180,6 @@ JS_STACK_CALLS = {
         "line 4 > eval",
         "",
         "window.navigator.platform",
-        "get",
-    ),
-    (
-        JS_STACK_TEST_SCRIPT_URL,
-        "1",
-        "18",
-        "",
-        "line 11 > eval",
-        "",
-        "window.navigator.buildID",
         "get",
     ),
     (
@@ -228,11 +219,11 @@ JS_COOKIE_TEST_URL = "%s/js_cookie.html" % utilities.BASE_TEST_URL
 DOCUMENT_COOKIE_READ = (
     JS_COOKIE_TEST_URL,
     "8",
-    "21",
+    "30",
     "set_cookie",
     "",
-    "set_cookie@" + JS_COOKIE_TEST_URL + ":8:21"
-    "\nonload@" + JS_COOKIE_TEST_URL + ":1:1",
+    "set_cookie@" + JS_COOKIE_TEST_URL + ":8:30"
+    "\nonload@" + JS_COOKIE_TEST_URL + ":12:30",
     "window.document.cookie",
     "get",
     "test_cookie=Test-0123456789",
@@ -241,11 +232,11 @@ DOCUMENT_COOKIE_READ = (
 DOCUMENT_COOKIE_WRITE = (
     JS_COOKIE_TEST_URL,
     "7",
-    "9",
+    "25",
     "set_cookie",
     "",
-    "set_cookie@" + JS_COOKIE_TEST_URL + ":7:9"
-    "\nonload@" + JS_COOKIE_TEST_URL + ":1:1",
+    "set_cookie@" + JS_COOKIE_TEST_URL + ":7:25"
+    "\nonload@" + JS_COOKIE_TEST_URL + ":12:30",
     "window.document.cookie",
     "set",
     "test_cookie=Test-0123456789; " "expires=Tue, 31 Dec 2030 00:00:00 UTC; path=/",

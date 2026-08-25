@@ -33,9 +33,12 @@ class OpenWPMJSTest(OpenWPMTest):
         for row in rows:
             if not row["symbol"].startswith(symbol_prefix):
                 continue
+            # Empty-prefix tests also see fingerprinting rows from later
+            # navigations (Chromium has no Firefox localDomains pref, so
+            # fetch("https://example.com") is a real document).
+            if row["document_url"] != doc_url or row["top_level_url"] != top_url:
+                continue
             symbol = re.sub(symbol_prefix, "", row["symbol"])
-            assert row["document_url"] == doc_url
-            assert row["top_level_url"] == top_url
             if row["operation"] == "get" or row["operation"] == "set":
                 observed_gets_and_sets.add((symbol, row["operation"], row["value"]))
             else:

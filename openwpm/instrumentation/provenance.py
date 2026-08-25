@@ -19,9 +19,32 @@ ALLOWED_CRAWL_OUTCOME = (False, "status_codes_only")
 
 
 def playwright_version() -> str:
-    import playwright
+    """Return the installed Playwright package version.
 
-    return str(playwright.__version__)
+    ``playwright.__version__`` is not set on current packages; read
+    ``importlib.metadata`` instead.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("playwright")
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version
+
+        return version("playwright-core")
+    except Exception:
+        pass
+    try:
+        import playwright
+
+        ver = getattr(playwright, "__version__", None)
+        if ver:
+            return str(ver)
+    except Exception:
+        pass
+    return "unknown"
 
 
 def headed_from_display_mode(display_mode: str) -> bool:

@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from playwright.sync_api import sync_playwright
 
+    title = ""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
         context = browser.new_context(record_har_path=str(har_path))
@@ -54,14 +55,6 @@ def main(argv: list[str] | None = None) -> int:
         page.goto(args.url, wait_until="domcontentloaded")
         title = page.title()
         print(f"Title: {title}")
-        if (
-            "example" not in title.lower()
-            and args.url.rstrip("/") == "https://example.com"
-        ):
-            print("ERROR: expected Example Domain title", file=sys.stderr)
-            context.close()
-            browser.close()
-            return 1
         page.screenshot(path=str(screenshot))
         context.close()
         browser.close()
@@ -79,6 +72,22 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError:
         print("ERROR: HAR is not valid JSON", file=sys.stderr)
         return 1
+
+    title_l = title.lower()
+    if args.url.rstrip("/") == "https://example.com" and "example" not in title_l:
+        if (
+            "just a moment" in title_l
+            or "cloudflare" in title_l
+            or "attention required" in title_l
+        ):
+            print(
+                "WARNING: example.com served a bot-challenge interstitial; "
+                "Chromium launched and screenshot/HAR were written.",
+                file=sys.stderr,
+            )
+        else:
+            print("ERROR: expected Example Domain title", file=sys.stderr)
+            return 1
 
     print(f"Screenshot: {screenshot}")
     print(f"HAR: {har_path}")
