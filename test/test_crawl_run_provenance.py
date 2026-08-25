@@ -27,8 +27,13 @@ from . import utilities
 from .openwpmtest import OpenWPMTest
 
 
-def test_headers_json_is_title_case_pairs():
-    raw = _headers_json({"content-type": "text/plain", "content-length": "4"})
+def test_headers_json_preserves_wire_case_pairs():
+    raw = _headers_json(
+        [
+            {"name": "Content-Type", "value": "text/plain"},
+            {"name": "Content-Length", "value": "4"},
+        ]
+    )
     assert "Content-Type" in raw
     assert "Content-Length" in raw
     parsed = json.loads(raw)
@@ -37,6 +42,8 @@ def test_headers_json_is_title_case_pairs():
         names.append(header)
         assert isinstance(value, str)
     assert names == ["Content-Type", "Content-Length"]
+    # Must not rewrite to the Playwright headers-dict lowercase form.
+    assert raw != json.dumps([{"name": "content-type", "value": "text/plain"}])
 
 
 def test_playwright_version_is_live():

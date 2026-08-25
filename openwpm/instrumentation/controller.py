@@ -79,35 +79,9 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-# Historical OpenWPM (Firefox webRequest) stored headers as a JSON list of
-# ``[Name, value]`` pairs with conventional Title-Case for known names.
-# Playwright's ``request.headers`` lowercases names and tests assert both
-# ``"Content-Type" in headers`` (substring on the JSON string) and
-# ``for header, value in json.loads(headers)``.
-_HEADER_CANON = {
-    "content-type": "Content-Type",
-    "content-length": "Content-Length",
-    "location": "Location",
-    "referer": "Referer",
-    "referrer": "Referer",
-    "host": "Host",
-    "origin": "Origin",
-    "cookie": "Cookie",
-    "set-cookie": "Set-Cookie",
-    "user-agent": "User-Agent",
-    "accept": "Accept",
-    "accept-language": "Accept-Language",
-    "accept-encoding": "Accept-Encoding",
-}
-
-
-def _canonical_header_name(name: str) -> str:
-    lower = name.lower()
-    if lower in _HEADER_CANON:
-        return _HEADER_CANON[lower]
-    return "-".join(part.capitalize() for part in name.split("-") if part)
-
-
+# Historical OpenWPM stored headers as a JSON list of ``[Name, value]``
+# pairs. Playwright's ``headers`` dict lowercases names; ``headers_array``
+# keeps wire case and duplicate names. Do not lowercase in ``_headers_json``.
 def _headers_json(headers: Any) -> str:
     pairs: List[List[str]] = []
     items: Any
@@ -120,19 +94,21 @@ def _headers_json(headers: Any) -> str:
             name, value = item.get("name", ""), item.get("value", "")
         else:
             name, value = item[0], item[1]
-        pairs.append([_canonical_header_name(str(name)), str(value)])
+        pairs.append([str(name), str(value)])
     return json.dumps(pairs)
 
 
-def _request_header_pairs(request: Any) -> List[Tuple[str, str]]:
+def _header_pairs_from_playwright(resource: Any) -> List[Tuple[str, str]]:
     try:
-        array = request.headers_array
-        if array:
+        array = resource.headers_array
+        if callable(array):
+            array = array()
+        if array is not None:
             return [(str(h["name"]), str(h["value"])) for h in array]
     except Exception:
         pass
     try:
-        return [(str(k), str(v)) for k, v in dict(request.headers).items()]
+        return [(str(k), str(v)) for k, v in dict(resource.headers).items()]
     except Exception:
         return []
 
@@ -629,7 +605,7 @@ class MeasurementController:
                 )
         request_id = self._rid(_req_key(request))
         post_body, post_body_raw = _parse_post(request)
-        header_pairs = _request_header_pairs(request)
+        header_pairs = _header_pairs_from_playwright(request)
         if request.method == "POST":
             header_pairs = _ensure_post_headers(header_pairs, request)
         referrer = ""
@@ -670,13 +646,21 @@ class MeasurementController:
         redirected = request.redirected_from
         if redirected is not None:
             location = ""
+            redirect_headers: List[Tuple[str, str]] = []
             try:
-                # Location is on the redirecting response when available.
                 resp = redirected.response()
                 if resp:
-                    location = resp.headers.get("location") or ""
+                    redirect_headers = _header_pairs_from_playwright(resp)
+                    for name, value in redirect_headers:
+                        if name.lower() == "location":
+                            location = value
+                            break
             except Exception:
                 location = ""
+            if not any(name.lower() == "location" for name, _ in redirect_headers):
+                redirect_headers = list(redirect_headers) + [
+                    ("Location", location or url)
+                ]
             self._save(
                 "http_redirects",
                 {
@@ -692,9 +676,7 @@ class MeasurementController:
                     "new_request_id": str(request_id),
                     "response_status": 302,
                     "response_status_text": "",
-                    "headers": _headers_json(
-                        {"Location": location} if location else {}
-                    ),
+                    "headers": _headers_json(redirect_headers),
                     "time_stamp": _utc_now(),
                 },
             )
@@ -724,12 +706,7 @@ class MeasurementController:
         from_cache = (
             1 if extra.get("fromDiskCache") or extra.get("fromPrefetchCache") else 0
         )
-        try:
-            header_pairs = [
-                (str(h["name"]), str(h["value"])) for h in response.headers_array
-            ]
-        except Exception:
-            header_pairs = [(str(k), str(v)) for k, v in dict(response.headers).items()]
+        header_pairs = _header_pairs_from_playwright(response)
         headers = {k.lower(): v for k, v in header_pairs}
         location = headers.get("location") or ""
         frame = self._safe_frame(request)
