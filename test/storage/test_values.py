@@ -247,12 +247,15 @@ def generate_test_values() -> dt_test_values:
         "user_agent": random_word(12),
     }
     test_values[TableName("crawl_run_provenance")] = fields
-    # crawl_outcome
+    # crawl_outcome — status and outcome are bound by CHECK
+    status, outcome = random.choice(
+        [(403, "forbidden"), (429, "rate_limited"), (503, "unavailable")]
+    )
     fields = {
         "visit_id": random.randint(0, 2**63 - 1),
         "browser_id": random.randint(0, 2**31 - 1),
-        "http_status": random.choice([403, 429, 503]),
-        "outcome": random_word(12),
+        "http_status": status,
+        "outcome": outcome,
         "resource_scope": "document",
     }
     test_values[TableName("crawl_outcome")] = fields
