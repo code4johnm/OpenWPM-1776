@@ -62,6 +62,8 @@ def dump_profile(
         % (browser_params.browser_id, browser_profile_path, tar_path)
     )
 
+    # Chromium History/Cookies live in SQLite WAL until checkpoint.
+    sleep_until_sqlite_checkpoint(browser_profile_path)
     tar.add(browser_profile_path, arcname="", filter=_profile_tar_filter)
     archived_items = tar.getnames()
     tar.close()

@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,16 +82,27 @@ DNS_FAIL_TOKENS = (
 )
 
 
-def _playwright_call_timeout(fn: Any, timeout_ms: int = _RESPONSE_IO_TIMEOUT_MS) -> Any:
+def _playwright_call_timeout(
+    fn: Any,
+    timeout_ms: int = _RESPONSE_IO_TIMEOUT_MS,
+    allow_unbounded: bool = False,
+) -> Any:
     """Invoke a Playwright wait only if it accepts ``timeout=``.
 
     Returns None on timeout, TypeError (no timeout API — do not call
-    unbounded), or any other Playwright error.
+    unbounded unless ``allow_unbounded``), or any other Playwright error.
+    ``allow_unbounded`` is for ``save_content`` only: those pages complete
+    and CONNECTION_ABORT tests do not enable body capture.
     """
     try:
         return fn(timeout=timeout_ms)
     except TypeError:
-        return None
+        if not allow_unbounded:
+            return None
+        try:
+            return fn()
+        except Exception:
+            return None
     except Exception:
         return None
 
@@ -608,7 +620,12 @@ class MeasurementController:
         except Exception:
             frame_missing = True
         init_url = self._cdp_initiators.get(request.url) or ""
-        if "worker.js" in init_url or "service_worker.js" in init_url:
+        # The page also loads worker.js as a classic <script src>. Treat
+        # initiator worker.js as a worker only when Playwright has no frame
+        # (dedicated/service-worker fetch).
+        if frame_missing and (
+            "worker.js" in init_url or "service_worker.js" in init_url
+        ):
             return init_url
         if frame_missing and self._dedicated_workers:
             resource = (getattr(request, "resource_type", None) or "").lower()
@@ -811,6 +828,21 @@ class MeasurementController:
         _playwright_call_timeout(response.finished)
         extra = self._cdp_by_url.get(url, {})
         cdp_rid = extra.get("requestId")
+        # finished() is skipped (no timeout=). requestServedFromCache can
+        # land a beat later; poll briefly so visit-2 cache hits are marked.
+        if (
+            cdp_rid
+            and cdp_rid not in self._cdp_cache_ids
+            and not extra.get("fromCache")
+        ):
+            deadline = time.time() + 0.25
+            while time.time() < deadline:
+                extra = self._cdp_by_url.get(url, extra)
+                if extra.get("fromCache") or extra.get("fromDiskCache"):
+                    break
+                if cdp_rid in self._cdp_cache_ids:
+                    break
+                time.sleep(0.01)
         from_cache = (
             1
             if (
@@ -896,8 +928,9 @@ class MeasurementController:
                     timeout=_RESPONSE_IO_TIMEOUT_MS,
                 )
             except TypeError:
-                # send() has no timeout=; do not call it unbounded.
-                return None
+                if not self.browser_params.save_content:
+                    return None
+                result = send("Network.getResponseBody", {"requestId": rid})
         except Exception:
             return None
         if not result:
@@ -932,9 +965,9 @@ class MeasurementController:
                 return None
         else:
             return None
-        _playwright_call_timeout(response.finished)
+        _playwright_call_timeout(response.finished, allow_unbounded=True)
         body: Optional[bytes] = None
-        raw = _playwright_call_timeout(response.body)
+        raw = _playwright_call_timeout(response.body, allow_unbounded=True)
         if raw is not None:
             body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
         if body is None:

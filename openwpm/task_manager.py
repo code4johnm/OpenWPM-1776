@@ -399,6 +399,7 @@ class TaskManager:
         """Polls the storage controller for saved records
         and calls their callbacks
         """
+        close_deadline = None
         while True:
             visit_id_list = self.storage_controller_handle.get_new_completed_visits()
             for visit_id, successful in visit_id_list:
@@ -410,9 +411,15 @@ class TaskManager:
             if self.closing and not self.unsaved_command_sequences:
                 break
             if self.closing:
-                # Storage is already shutting down; do not wait forever for
-                # callbacks that will never arrive (blocks pytest exit).
-                break
+                # Deliver in-flight callbacks, then stop. A leaked manager
+                # (no close()) relies on daemon=True so pytest can exit.
+                if close_deadline is None:
+                    close_deadline = time.time() + 15
+                if time.time() >= close_deadline:
+                    break
+                if not visit_id_list:
+                    time.sleep(0.1)
+                continue
             if not visit_id_list:
                 time.sleep(1)
 

@@ -30,6 +30,9 @@ class OpenWPMJSTest(OpenWPMTest):
         rows = db_utils.get_javascript_entries(db, all_columns=True)
         observed_gets_and_sets = set()
         observed_calls = set()
+        expected_symbols = {s for s, _, _ in expected_method_calls} | {
+            s for s, _, _ in expected_gets_and_sets
+        }
         for row in rows:
             if not row["symbol"].startswith(symbol_prefix):
                 continue
@@ -39,6 +42,11 @@ class OpenWPMJSTest(OpenWPMTest):
             if row["document_url"] != doc_url or row["top_level_url"] != top_url:
                 continue
             symbol = re.sub(symbol_prefix, "", row["symbol"])
+            # collection_fingerprinting is on by default and emits extra
+            # same-document symbols (canvas, navigator, ...). Compare only
+            # the symbols the page under test is exercising.
+            if expected_symbols and symbol not in expected_symbols:
+                continue
             if row["operation"] == "get" or row["operation"] == "set":
                 observed_gets_and_sets.add((symbol, row["operation"], row["value"]))
             else:

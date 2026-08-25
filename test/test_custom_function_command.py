@@ -1,4 +1,5 @@
 import sqlite3
+from urllib.parse import urljoin
 
 from openwpm import command_sequence
 from openwpm.browser import BrowserSession, By
@@ -47,15 +48,17 @@ class CollectLinksCommand(BaseCommand):
     ) -> None:
         browser_id = self.browser_id
         visit_id = self.visit_id
-        link_urls = [
-            x
-            for x in (
-                element.get_attribute("href")
-                for element in webdriver.find_elements(By.TAG_NAME, "a")
-            )
-            if x is not None and x.startswith(self.scheme + "://")
-        ]
         current_url = webdriver.current_url
+        # Playwright returns the raw href attribute (simple_d.html), not
+        # the resolved URL Selenium used to give.
+        link_urls = []
+        for element in webdriver.find_elements(By.TAG_NAME, "a"):
+            href = element.get_attribute("href")
+            if href is None:
+                continue
+            absolute = urljoin(current_url, href)
+            if absolute.startswith(self.scheme + "://"):
+                link_urls.append(absolute)
 
         sock = ClientSocket()
         assert manager_params.storage_controller_address is not None
