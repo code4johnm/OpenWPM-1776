@@ -644,12 +644,14 @@ class BrowserManagerHandle:
         ):
             try:
                 from .commands.utils.firefox_profile import (
-                    materialize_chromium_history,
                     sleep_until_sqlite_checkpoint,
+                    snapshot_chromium_history,
                 )
 
                 sleep_until_sqlite_checkpoint(self.current_profile_path, timeout=5)
-                materialize_chromium_history(self.current_profile_path)
+                # Side-file only. materialize() writes Default/History,
+                # which Chromium overwrites on quit.
+                snapshot_chromium_history(self.current_profile_path)
             except Exception:
                 self.logger.debug(
                     "BROWSER %i: Pre-close History snapshot failed",

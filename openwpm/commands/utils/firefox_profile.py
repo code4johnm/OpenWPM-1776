@@ -2,11 +2,16 @@
 # Gunes Acar and Marc Juarez
 
 import os
+import shutil
 import sqlite3
 import time
 from glob import glob
 from pathlib import Path
-from typing import Union
+from typing import List, Optional, Union
+
+# Chromium overwrites Default/History on quit. Keep a side copy at the
+# profile root so dump can restore a queryable ``urls`` table.
+OPENWPM_HISTORY_SNAPSHOT = "openwpm-history.sqlite"
 
 _CHROMIUM_SQLITE_NAMES = frozenset(
     {
@@ -90,6 +95,21 @@ def _sqlite_has_urls_table(db_path: Path) -> bool:
         return False
 
 
+def _sqlite_url_count(db_path: Path) -> int:
+    """Number of ``urls`` rows, or 0 if the file is missing/unreadable."""
+    if not _sqlite_has_urls_table(db_path):
+        return 0
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=5)
+        try:
+            row = con.execute("SELECT COUNT(*) FROM urls").fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            con.close()
+    except (sqlite3.Error, TypeError, ValueError):
+        return 0
+
+
 def _backup_sqlite(src: Path, dest: Path) -> bool:
     try:
         src_con = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True, timeout=5)
@@ -113,18 +133,39 @@ def _backup_sqlite(src: Path, dest: Path) -> bool:
         return False
 
 
-def materialize_chromium_history(profile_dir: Union[str, Path]) -> None:
-    """Write a standalone Default/History that has a queryable ``urls`` table.
+def _copy_sqlite_with_wal(src: Path, dest: Path) -> bool:
+    """Copy db + WAL/SHM then checkpoint, for when the backup API is locked."""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".openwpm-copy")
+        if tmp.exists():
+            tmp.unlink()
+        shutil.copy2(src, tmp)
+        for suffix in ("-wal", "-shm"):
+            side = Path(str(src) + suffix)
+            tmp_side = Path(str(tmp) + suffix)
+            if tmp_side.exists():
+                tmp_side.unlink()
+            if side.is_file() and side.stat().st_size > 0:
+                shutil.copy2(side, tmp_side)
+        con = sqlite3.connect(f"file:{tmp.as_posix()}?mode=rw", uri=True, timeout=5)
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            con.commit()
+        finally:
+            con.close()
+        tmp.replace(dest)
+        for suffix in ("-wal", "-shm"):
+            leftover = Path(str(dest) + suffix)
+            if leftover.exists():
+                leftover.unlink()
+        return _sqlite_url_count(dest) > 0 or _sqlite_has_urls_table(dest)
+    except (OSError, sqlite3.Error):
+        return False
 
-    After Chromium exits, History may be 0 bytes with data only in WAL.
-    Open read-only (applies WAL) and backup to a clean file so extract +
-    ``SELECT url FROM urls`` works without the WAL sidecar.
-    """
-    root = Path(profile_dir)
-    checkpoint_chromium_sqlite(root)
-    dest = root / "Default" / "History"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    candidates = []
+
+def _history_candidates(root: Path) -> List[Path]:
+    candidates: List[Path] = []
     for base in (root / "Default", root):
         if not base.is_dir():
             continue
@@ -134,12 +175,73 @@ def materialize_chromium_history(profile_dir: Union[str, Path]) -> None:
         named = base / "History"
         if named.is_file() and named not in candidates:
             candidates.append(named)
-    if dest.is_file() and dest not in candidates:
-        candidates.insert(0, dest)
-    for src in candidates:
-        if _sqlite_has_urls_table(src) or _backup_sqlite(src, dest):
-            if src != dest and _sqlite_has_urls_table(src):
-                _backup_sqlite(src, dest)
+    snap = root / OPENWPM_HISTORY_SNAPSHOT
+    if snap.is_file() and snap not in candidates:
+        candidates.append(snap)
+    return candidates
+
+
+def _replace_history(src: Path, dest: Path) -> bool:
+    if src.resolve() == dest.resolve():
+        return _sqlite_has_urls_table(dest)
+    if _backup_sqlite(src, dest):
+        return True
+    return _copy_sqlite_with_wal(src, dest)
+
+
+def snapshot_chromium_history(profile_dir: Union[str, Path]) -> None:
+    """Copy a History that has ``urls`` rows to ``openwpm-history.sqlite``.
+
+    Chromium rewrites ``Default/History`` on exit. The snapshot lives at
+    the profile root so the browser will not overwrite it.
+    """
+    root = Path(profile_dir)
+    dest = root / OPENWPM_HISTORY_SNAPSHOT
+    best: Optional[Path] = None
+    best_count = 0
+    for src in _history_candidates(root):
+        count = _sqlite_url_count(src)
+        if count > best_count:
+            best = src
+            best_count = count
+    if best is not None and best_count > 0:
+        if best.resolve() != dest.resolve():
+            _replace_history(best, dest)
+        return
+    for src in _history_candidates(root):
+        if src.name == OPENWPM_HISTORY_SNAPSHOT:
+            continue
+        if _replace_history(src, dest) and _sqlite_url_count(dest) > 0:
+            return
+
+
+def materialize_chromium_history(profile_dir: Union[str, Path]) -> None:
+    """Write a standalone Default/History that has a queryable ``urls`` table.
+
+    After Chromium exits, History may be 0 bytes with data only in WAL, or
+    Chromium may replace ``Default/History`` with an empty file. Prefer the
+    pre-close ``openwpm-history.sqlite`` snapshot when the live file has no
+    visit rows.
+    """
+    root = Path(profile_dir)
+    checkpoint_chromium_sqlite(root)
+    snapshot_chromium_history(root)
+    dest = root / "Default" / "History"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if _sqlite_url_count(dest) > 0:
+        return
+    snap = root / OPENWPM_HISTORY_SNAPSHOT
+    if _sqlite_url_count(snap) > 0:
+        _replace_history(snap, dest)
+        return
+    for src in _history_candidates(root):
+        if src.resolve() == dest.resolve():
+            if _sqlite_has_urls_table(src) or _backup_sqlite(src, dest):
+                return
+            continue
+        if _replace_history(src, dest) and (
+            _sqlite_url_count(dest) > 0 or _sqlite_has_urls_table(dest)
+        ):
             return
 
 

@@ -259,6 +259,11 @@ class MeasurementController:
         self._cdp_bodies: Dict[str, bytes] = {}
         self._pending_responses: List[Dict[str, Any]] = []
         self._worker_cdps: List[Any] = []
+        self._cdp_session_worker_url: Dict[str, str] = {}
+        self._cdp_msg_id = 1000
+        self._pending_auto_attach: List[Dict[str, Any]] = []
+        self._paused_session_ids: set = set()
+        self._pending_content_responses: Dict[str, Any] = {}
         self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
@@ -337,6 +342,7 @@ class MeasurementController:
         self._recorded_worker_request_keys = set()
         self._pending_cdp_worker = []
         self._cdp_bodies = {}
+        self._pending_content_responses = {}
         self._flush_js_buffer()
         self.sock.socket.send(
             (
@@ -351,10 +357,12 @@ class MeasurementController:
 
     def finalize(self, visit_id: VisitId, success: bool = True) -> None:
         self._flush_js()
-        self._flush_pending_cdp_worker_requests()
+        self._resume_auto_attached_targets()
         # Pump on the command thread (not inside a Playwright event).
         self._pump_playwright(300)
+        self._flush_pending_cdp_worker_requests()
         self._flush_pending_responses()
+        self._snapshot_history_safe()
         if self.browser_params.cookie_instrument:
             self._snapshot_cookies("manual-export")
         self.sock.socket.send(
@@ -369,6 +377,29 @@ class MeasurementController:
             )
         )
         self.visit_id = None
+
+    def persist_http_responses(self) -> None:
+        """Flush queued http_responses on the command thread after navigation."""
+        self._resume_auto_attached_targets()
+        self._pump_playwright(300)
+        self._flush_pending_cdp_worker_requests()
+        self._flush_pending_responses()
+        self._snapshot_history_safe()
+
+    def _snapshot_history_safe(self) -> None:
+        profile_path = getattr(self.browser_params, "profile_path", None)
+        if profile_path is None:
+            return
+        try:
+            from ..commands.utils.firefox_profile import snapshot_chromium_history
+
+            snapshot_chromium_history(profile_path)
+        except Exception:
+            logger.debug(
+                "BROWSER %i: History snapshot failed",
+                self.browser_id,
+                exc_info=True,
+            )
 
     def _next_ordinal(self) -> int:
         self.event_ordinal += 1
@@ -562,12 +593,125 @@ class MeasurementController:
             if self.browser_params.cookie_instrument:
                 cdp.on("Network.cookieChanged", self._on_cdp_cookie)
             cdp.send("Network.enable")
+            try:
+                cdp.on("Target.attachedToTarget", self._on_cdp_attached_to_target)
+                cdp.on(
+                    "Target.receivedMessageFromTarget",
+                    self._on_cdp_target_message,
+                )
+                auto_attach = {
+                    "autoAttach": True,
+                    "waitForDebuggerOnStart": True,
+                    "flatten": False,
+                    # Pause dedicated workers only. Iframes must not wait
+                    # or document/CSS capture and page load hang.
+                    "filter": [
+                        {"type": "worker"},
+                        {"type": "service_worker"},
+                        {"type": "shared_worker"},
+                    ],
+                }
+                try:
+                    cdp.send("Target.setAutoAttach", auto_attach)
+                except Exception:
+                    auto_attach.pop("filter", None)
+                    auto_attach["waitForDebuggerOnStart"] = False
+                    cdp.send("Target.setAutoAttach", auto_attach)
+            except Exception:
+                logger.debug(
+                    "BROWSER %i: Target.setAutoAttach failed",
+                    self.browser_id,
+                    exc_info=True,
+                )
             self._cdp = cdp
         except Exception:
             logger.warning(
                 "BROWSER %i: CDP Network session failed; cache/DNS extras limited",
                 self.browser_id,
             )
+
+    def _send_to_target(
+        self, session_id: str, method: str, params: Optional[Dict[str, Any]] = None
+    ) -> None:
+        if self._cdp is None or not session_id:
+            return
+        self._cdp_msg_id += 1
+        message = json.dumps(
+            {"id": self._cdp_msg_id, "method": method, "params": params or {}}
+        )
+        try:
+            self._cdp.send(
+                "Target.sendMessageToTarget",
+                {"sessionId": session_id, "message": message},
+            )
+        except Exception:
+            logger.debug(
+                "BROWSER %i: Target.sendMessageToTarget %s failed",
+                self.browser_id,
+                method,
+                exc_info=True,
+            )
+
+    def _on_cdp_attached_to_target(self, params: Dict[str, Any]) -> None:
+        # Do not cdp.send() here except to unblock non-worker targets.
+        # send() from a CDP handler can stall the sync dispatcher.
+        self._pending_auto_attach.append(params)
+        info = params.get("targetInfo") or {}
+        session_id = str(params.get("sessionId") or "")
+        ttype = str(info.get("type") or "")
+        url = str(info.get("url") or "")
+        if ttype == "worker":
+            if url:
+                self._dedicated_workers.add(url)
+            if session_id:
+                self._cdp_session_worker_url[session_id] = url
+                self._paused_session_ids.add(session_id)
+            return
+        if ttype in ("service_worker", "shared_worker"):
+            if url:
+                self._dedicated_workers.add(url)
+            if session_id:
+                self._cdp_session_worker_url[session_id] = url
+                self._send_to_target(session_id, "Network.enable")
+        if session_id:
+            self._send_to_target(session_id, "Runtime.runIfWaitingForDebugger")
+
+    def _resume_auto_attached_targets(self) -> None:
+        """Enable Network on paused workers, then resume them (command thread)."""
+        pending = self._pending_auto_attach
+        self._pending_auto_attach = []
+        for params in pending:
+            info = params.get("targetInfo") or {}
+            session_id = str(params.get("sessionId") or "")
+            ttype = str(info.get("type") or "")
+            url = str(info.get("url") or "")
+            if ttype in ("worker", "service_worker", "shared_worker"):
+                if url:
+                    self._dedicated_workers.add(url)
+                if session_id:
+                    self._cdp_session_worker_url[session_id] = url
+                    self._send_to_target(session_id, "Network.enable")
+            if session_id:
+                self._send_to_target(session_id, "Runtime.runIfWaitingForDebugger")
+                self._paused_session_ids.discard(session_id)
+        for session_id in list(self._paused_session_ids):
+            self._send_to_target(session_id, "Network.enable")
+            self._send_to_target(session_id, "Runtime.runIfWaitingForDebugger")
+        self._paused_session_ids.clear()
+
+    def _on_cdp_target_message(self, params: Dict[str, Any]) -> None:
+        session_id = str(params.get("sessionId") or "")
+        try:
+            msg = json.loads(params.get("message") or "{}")
+        except Exception:
+            return
+        method = msg.get("method") or ""
+        inner = msg.get("params") or {}
+        if method != "Network.requestWillBeSent":
+            return
+        worker_url = self._cdp_session_worker_url.get(session_id) or ""
+        if worker_url:
+            self._on_worker_session_cdp_request(inner, worker_url)
 
     def _on_cdp_request(self, params: Dict[str, Any]) -> None:
         request = params.get("request") or {}
@@ -753,6 +897,10 @@ class MeasurementController:
 
             wcdp.on("Network.requestWillBeSent", _on_worker_cdp_request)
             wcdp.send("Network.enable")
+            try:
+                wcdp.send("Runtime.runIfWaitingForDebugger")
+            except Exception:
+                pass
             self._worker_cdps.append(wcdp)
         except Exception:
             logger.debug(
@@ -1094,7 +1242,8 @@ class MeasurementController:
         except Exception:
             page = None
         content_hash = None
-        if self.browser_params.save_content:
+        want_content = self._content_resource_allowed(response)
+        if want_content:
             content_hash = self._maybe_save_body(response, request_id)
         record = {
             "incognito": 0,
@@ -1116,8 +1265,12 @@ class MeasurementController:
         }
         if self.visit_id is not None:
             record["visit_id"] = int(self.visit_id)
-        # Defer write so finalize can pump requestServedFromCache on the
-        # command thread. wait_for_timeout inside this handler deadlocks.
+        if want_content:
+            record["_want_content"] = content_hash is None
+            if content_hash is None:
+                self._pending_content_responses[url] = response
+        # Defer write so GetCommand/finalize can apply late CDP cache
+        # and body events. wait_for_timeout inside this handler deadlocks.
         self._pending_responses.append(record)
         if self.browser_params.dns_instrument:
             used = extra.get("remoteIPAddress")
@@ -1144,6 +1297,27 @@ class MeasurementController:
                 or url in self._cdp_cache_urls
             ):
                 record["is_cached"] = 1
+            want_content = bool(record.pop("_want_content", False))
+            if want_content and not record.get("content_hash"):
+                body = self._cdp_bodies.get(url) or self._cdp_response_body(url)
+                if not body:
+                    pending_resp = self._pending_content_responses.get(url)
+                    if pending_resp is not None:
+                        raw = _playwright_call_timeout(
+                            pending_resp.body, allow_unbounded=True
+                        )
+                        if raw is not None:
+                            body = (
+                                raw
+                                if isinstance(raw, (bytes, bytearray))
+                                else bytes(raw)
+                            )
+                if body:
+                    digest = hashlib.sha256(body).hexdigest()
+                    b64 = base64.b64encode(body).decode("ascii")
+                    self.sock.socket.send((RECORD_TYPE_CONTENT, [b64, digest]))
+                    record["content_hash"] = digest
+                    self._pending_content_responses.pop(url, None)
             self._save("http_responses", record)
 
     def _on_request_failed(self, request: Request) -> None:
@@ -1197,27 +1371,28 @@ class MeasurementController:
             return bytes(payload)
         return str(payload).encode("utf-8", errors="replace")
 
-    def _maybe_save_body(self, response: Response, request_id: int) -> Optional[str]:
+    def _content_resource_allowed(self, response: Response) -> bool:
         option = self.browser_params.save_content
+        if option is True:
+            return True
+        if not option or not isinstance(option, str):
+            return False
+        allowed = {s.strip() for s in option.split(",") if s.strip()}
+        if not allowed:
+            return False
         frame = self._safe_frame(response.request)
         resource = _request_resource_type(response.request, frame)
         path = urlparse(response.url).path.lower()
-        if option is True:
-            pass
-        elif isinstance(option, str):
-            allowed = {s.strip() for s in option.split(",") if s.strip()}
-            if resource not in allowed:
-                if "script" in allowed and path.endswith(".js"):
-                    resource = "script"
-                elif {"main_frame", "sub_frame"} & allowed and path.endswith(
-                    (".html", ".htm")
-                ):
-                    resource = resource if resource in allowed else "sub_frame"
-                else:
-                    return None
-                if resource not in allowed:
-                    return None
-        else:
+        if resource in allowed:
+            return True
+        if "script" in allowed and path.endswith(".js"):
+            return True
+        if {"main_frame", "sub_frame"} & allowed and path.endswith((".html", ".htm")):
+            return True
+        return False
+
+    def _maybe_save_body(self, response: Response, request_id: int) -> Optional[str]:
+        if not self._content_resource_allowed(response):
             return None
         # CONNECTION_ABORT tests keep save_content off.
         _playwright_call_timeout(response.finished, allow_unbounded=True)

@@ -95,6 +95,13 @@ class GetCommand(BaseCommand):
         if self.sleep:
             time.sleep(self.sleep)
 
+        persist = getattr(extension_socket, "persist_http_responses", None)
+        if callable(persist):
+            try:
+                persist()
+            except Exception:
+                logger.debug("persist_http_responses failed", exc_info=True)
+
         close_other_windows(webdriver)
 
         if browser_params.bot_mitigation:
@@ -161,6 +168,13 @@ class BrowseCommand(BaseCommand):
                     wait_until_loaded(webdriver, 300)
                 except Exception:
                     break
+
+        persist = getattr(extension_socket, "persist_http_responses", None)
+        if callable(persist):
+            try:
+                persist()
+            except Exception:
+                logger.debug("persist_http_responses failed", exc_info=True)
 
 
 class SaveScreenshotCommand(BaseCommand):
