@@ -52,6 +52,10 @@ def test_save_incomplete_profile_error(default_params, task_manager_creator):
     )
     manager, _ = task_manager_creator((manager_params, browser_params[:1]))
     manager.get(BASE_TEST_URL)
+    # shutdown_browser closes Chromium before dump_profile so tar.add does
+    # not block on a live user-data-dir. Chromium rewrites Preferences on
+    # quit, so unlink the required file after the process has stopped.
+    manager.browsers[0].close_browser_manager()
     (manager.browsers[0].current_profile_path / "Default" / "Preferences").unlink()
     with pytest.raises(RuntimeError) as error:
         manager.close()

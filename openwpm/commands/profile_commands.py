@@ -1,7 +1,7 @@
 import logging
 import tarfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from openwpm.config import BrowserParamsInternal, ManagerParamsInternal
 
@@ -17,6 +17,26 @@ REQUIRED_PROFILE_ITEMS = [
     "Default/Preferences",
     "Local State",
 ]
+
+# Live (or leftover) Chromium lock/socket files. tarfile treats a unix
+# socket as a regular file and read() blocks until GitHub cancels the job.
+_SKIP_CHROMIUM_LOCK_FILES = frozenset(
+    {
+        "SingletonLock",
+        "SingletonSocket",
+        "SingletonCookie",
+        "DevToolsActivePort",
+    }
+)
+
+
+def _profile_tar_filter(tarinfo: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+    """Keep regular files and directories; drop locks, sockets, and devices."""
+    if Path(tarinfo.name).name in _SKIP_CHROMIUM_LOCK_FILES:
+        return None
+    if tarinfo.isfile() or tarinfo.isdir():
+        return tarinfo
+    return None
 
 
 def dump_profile(
@@ -42,7 +62,7 @@ def dump_profile(
         % (browser_params.browser_id, browser_profile_path, tar_path)
     )
 
-    tar.add(browser_profile_path, arcname="")
+    tar.add(browser_profile_path, arcname="", filter=_profile_tar_filter)
     archived_items = tar.getnames()
     tar.close()
 

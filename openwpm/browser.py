@@ -263,11 +263,28 @@ class BrowserSession:
             pass
 
     def close_context(self) -> None:
-        Error, _ = _playwright_errors()
+        """Close the persistent context without waiting forever on in-flight IO.
+
+        /CONNECTION_ABORT/ advertises Content-Length 99999 and sends only
+        ``b"partial"``. Navigating to about:blank first aborts that download;
+        ``timeout=`` is passed only when Playwright accepts it.
+        """
+        if getattr(self, "context", None) is None:
+            return
+        Error, PWTimeout = _playwright_errors()
         try:
-            self.context.close()
-        except Error:
+            self.reset_to_blank()
+        except Exception:
+            logger.debug("reset_to_blank before context.close failed", exc_info=True)
+        try:
+            try:
+                self.context.close(timeout=10_000)
+            except TypeError:
+                self.context.close()
+        except (Error, PWTimeout):
             pass
+        self.context = None  # type: ignore[assignment]
+        self.page = None  # type: ignore[assignment]
 
     def quit(self) -> None:
         self.close_context()
