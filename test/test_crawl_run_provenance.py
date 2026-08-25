@@ -52,7 +52,10 @@ def test_http_status_constants_and_mapping():
     assert OUTCOME_BY_STATUS[503] == "unavailable"
     assert outcome_for_status(200) is None
     assert outcome_for_status(None) is None
+    assert outcome_for_status(301) is None
+    assert outcome_for_status(302) is None
     assert build_crawl_outcome_record(visit_id=1, browser_id=2, http_status=200) is None
+    assert build_crawl_outcome_record(visit_id=1, browser_id=2, http_status=301) is None
     row = build_crawl_outcome_record(visit_id=1, browser_id=2, http_status=429)
     assert row == {
         "visit_id": 1,
@@ -166,6 +169,19 @@ class TestProvenanceAndOutcome(OpenWPMTest):
         assert rows[0]["outcome"] == outcome
         assert rows[0]["resource_scope"] == "document"
         assert db_utils.query_db(db, "SELECT COUNT(*) FROM http_requests")[0][0] == 0
+
+    def test_redirect_stores_final_document_status(self):
+        db = self._visit_with(
+            f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/bounce"
+            "?dst=/MAGIC_STATUS/403",
+            record_crawl_outcome="status_codes_only",
+            cookie_instrument=False,
+            http_instrument=False,
+        )
+        rows = db_utils.query_db(db, "SELECT http_status, outcome FROM crawl_outcome")
+        assert len(rows) == 1
+        assert rows[0]["http_status"] == 403
+        assert rows[0]["outcome"] == "forbidden"
 
 
 def test_record_crawl_outcome_true_is_config_error():
