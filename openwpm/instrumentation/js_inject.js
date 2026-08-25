@@ -218,6 +218,7 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
       operation,
       symbol: instrumentedVariableName,
       value: serializeObject(value, logSettings.logFunctionsAsStrings),
+      documentUrl: window.location.href,
       scriptUrl: callContext.scriptUrl,
       scriptLine: callContext.scriptLine,
       scriptCol: callContext.scriptCol,
@@ -271,6 +272,7 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
         symbol: instrumentedFunctionName,
         args: serialArgs,
         value: "",
+        documentUrl: window.location.href,
         scriptUrl: callContext.scriptUrl,
         scriptLine: callContext.scriptLine,
         scriptCol: callContext.scriptCol,
@@ -337,79 +339,65 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
             scriptUrl: items[0],
             scriptLine: items[items.length - 2],
             scriptCol: items[items.length - 1],
+            scriptLocEval: "",
           };
         }
       }
       return null;
     }
     const body = trimmed.slice(3);
-    let m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
-    if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: m[3], scriptCol: m[4] };
-    }
-    m = body.match(/^(.*?)\s+\((.+)\)$/);
-    if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: "", scriptCol: "" };
-    }
-    m = body.match(/^(.*):(\d+):(\d+)$/);
-    if (m) {
-      return { funcName: "", scriptUrl: m[1], scriptLine: m[2], scriptCol: m[3] };
-    }
-    return { funcName: "", scriptUrl: body, scriptLine: "", scriptCol: "" };
-  }
-
-  function isInstrumentationFrame(frame) {
-    const blob = (frame.funcName + " " + frame.scriptUrl).toLowerCase();
-    return (
-      blob.includes("getstacktrace") ||
-      blob.includes("getoriginatingscriptcontext") ||
-      blob.includes("parsev8frame") ||
-      blob.includes("instrumentfunction") ||
-      blob.includes("instrumentobject") ||
-      blob.includes("logvalue") ||
-      blob.includes("logcall") ||
-      blob.includes("__playwright") ||
-      blob.includes("__pw_") ||
-      frame.scriptUrl === "<anonymous>" ||
-      frame.scriptUrl.indexOf("pptr:") === 0
+    // V8 eval / Function: eval (eval at NAME (FILE:LINE:COL), <anonymous>:L:C)
+    let m = body.match(
+      /^eval\s+\(eval at ([^(]*)\((.+?):(\d+):(\d+)\),\s*<anonymous>(?::(\d+):(\d+))?\)$/,
     );
-  }
-
-
-  function parseV8Frame(line) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("at ")) {
-      // Firefox-style: FUNC@FILE:LINE:COL
-      if (trimmed.includes("@")) {
-        const at = trimmed.indexOf("@");
-        const funcName = trimmed.slice(0, at);
-        const rest = trimmed.slice(at + 1);
-        const items = rsplit(rest, ":", 2);
-        if (items.length >= 3) {
-          return {
-            funcName,
-            scriptUrl: items[0],
-            scriptLine: items[items.length - 2],
-            scriptCol: items[items.length - 1],
-          };
-        }
-      }
-      return null;
-    }
-    const body = trimmed.slice(3);
-    let m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
     if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: m[3], scriptCol: m[4] };
+      const site = m[1].trim();
+      const kind = m[5] && m[5] !== "1" ? "Function" : "eval";
+      return {
+        funcName: kind === "Function" ? "anonymous" : "",
+        scriptUrl: m[2],
+        scriptLine: m[5] || "1",
+        scriptCol: m[6] || "1",
+        scriptLocEval: "line " + m[3] + " > " + kind,
+      };
+    }
+    m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
+    if (m) {
+      return {
+        funcName: m[1],
+        scriptUrl: m[2],
+        scriptLine: m[3],
+        scriptCol: m[4],
+        scriptLocEval: "",
+      };
     }
     m = body.match(/^(.*?)\s+\((.+)\)$/);
     if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: "", scriptCol: "" };
+      return {
+        funcName: m[1],
+        scriptUrl: m[2],
+        scriptLine: "",
+        scriptCol: "",
+        scriptLocEval: "",
+      };
     }
     m = body.match(/^(.*):(\d+):(\d+)$/);
     if (m) {
-      return { funcName: "", scriptUrl: m[1], scriptLine: m[2], scriptCol: m[3] };
+      return {
+        funcName: "",
+        scriptUrl: m[1],
+        scriptLine: m[2],
+        scriptCol: m[3],
+        scriptLocEval: "",
+      };
     }
-    return { funcName: "", scriptUrl: body, scriptLine: "", scriptCol: "" };
+    return {
+      funcName: "",
+      scriptUrl: body,
+      scriptLine: "",
+      scriptCol: "",
+      scriptLocEval: "",
+    };
   }
 
   function isInstrumentationFrame(frame) {
@@ -461,16 +449,19 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
       return empty_context;
     }
     let scriptUrl = caller.scriptUrl || "";
-    let scriptLocEval = "";
+    let scriptLocEval = caller.scriptLocEval || "";
     const lineNoIdx = scriptUrl.indexOf(" line ");
     if (lineNoIdx !== -1) {
       scriptLocEval = scriptUrl.slice(lineNoIdx + 1);
       scriptUrl = scriptUrl.slice(0, lineNoIdx);
-    } else {
-      // V8 eval frames: eval at NAME (file:line:col)
-      const evalMatch = scriptUrl.match(/eval at .* \((.+):(\d+):(\d+)\)$/);
+    } else if (!scriptLocEval) {
+      // V8 leftover: eval at NAME (file:line:col), <anonymous>
+      const evalMatch = scriptUrl.match(
+        /eval at .* \((.+):(\d+):(\d+)\)(?:, <anonymous>)?$/,
+      );
       if (evalMatch) {
-        scriptLocEval = "eval";
+        scriptUrl = evalMatch[1];
+        scriptLocEval = "line " + evalMatch[2] + " > eval";
       }
     }
     const callStack = getCallStack

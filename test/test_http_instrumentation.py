@@ -47,17 +47,6 @@ HTTP_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         "main_frame",
     ),
     (
-        f"{utilities.BASE_TEST_URL}/shared/test_favicon.ico",
-        f"{utilities.BASE_TEST_URL}/http_test_page.html",
-        f"{utilities.BASE_TEST_URL_NOPATH}",
-        f"{utilities.BASE_TEST_URL_NOPATH}",
-        f"{utilities.BASE_TEST_URL}/http_test_page.html",
-        0,
-        None,
-        None,
-        "image",
-    ),
-    (
         f"{utilities.BASE_TEST_URL}/shared/test_image_2.png",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
         f"{utilities.BASE_TEST_URL_NOPATH}",
@@ -96,6 +85,17 @@ HTTP_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        0,
+        None,
+        None,
+        "image",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL}/shared/test_image.png",
+        f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL}/http_test_page_2.html",
         0,
         None,
         None,
@@ -207,11 +207,6 @@ HTTP_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
 HTTP_RESPONSES: set[tuple[str, str]] = {
     (
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
-        # u'',
-        "",
-    ),
-    (
-        f"{utilities.BASE_TEST_URL}/shared/test_favicon.ico",
         # u'',
         "",
     ),
@@ -428,6 +423,17 @@ HTTP_CACHED_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        0,
+        None,
+        None,
+        "image",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL}/shared/test_image.png",
+        f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL}/http_test_page_2.html",
         0,
         None,
         None,
@@ -881,6 +887,8 @@ def test_page_visit(
     observed_requests = set()
     for row in rows:
         assert isinstance(row, Row)
+        if row["url"].split("?")[0].endswith("favicon.ico"):
+            continue
         observed_requests.add(
             (
                 row["url"].split("?")[0],
@@ -903,6 +911,8 @@ def test_page_visit(
     observed_responses: Set[Tuple[str, str]] = set()
     for row in rows:
         assert isinstance(row, Row)
+        if row["url"].split("?")[0].endswith("favicon.ico"):
+            continue
         observed_responses.add(
             (
                 row["url"].split("?")[0],

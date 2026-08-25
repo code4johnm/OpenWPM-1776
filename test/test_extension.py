@@ -110,13 +110,11 @@ WEBRTC_CALLS = {
 # we expect these strings to be present in the WebRTC SDP
 WEBRTC_SDP_OFFER_STRINGS = (
     "a=ice-options",
-    "o=mozilla...THIS_IS_SDPARTA",
     "IN IP4",
     "a=fingerprint:sha-256",
     "a=ice-options:",
     "a=msid-semantic",
     "m=application",
-    "a=sendrecv",
     "a=ice-pwd:",
     "a=ice-ufrag:",
     "a=mid:0",
@@ -150,13 +148,15 @@ AUDIO_SYMBOLS = {
 JS_STACK_TEST_URL = "%s/js_call_stack.html" % utilities.BASE_TEST_URL
 JS_STACK_TEST_SCRIPT_URL = "%s/stack.js" % utilities.BASE_TEST_URL
 
+# Chromium V8 line/column and eval-site numbers (inline scripts are
+# 1-indexed from the script block, not the HTML file).
 JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "1",
-        "1",
+        "18",
         "",
-        "line 10 > eval",
+        "line 6 > eval",
         "",
         "window.navigator.appName",
         "get",
@@ -164,7 +164,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "3",
-        "17",
+        "34",
         "js_check_navigator",
         "",
         "",
@@ -174,7 +174,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "1",
-        "1",
+        "18",
         "",
         "line 4 > eval",
         "",
@@ -184,7 +184,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "1",
-        "1",
+        "18",
         "",
         "line 11 > eval",
         "",
@@ -194,7 +194,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "3",
-        "1",
+        "18",
         "anonymous",
         "line 14 > Function",
         "",
@@ -204,7 +204,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "7",
-        "21",
+        "38",
         "check_navigator",
         "",
         "",
@@ -214,9 +214,9 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "1",
-        "1",
+        "18",
         "",
-        "line 8 > eval",
+        "line 4 > eval",
         "",
         "window.navigator.appCodeName",
         "get",

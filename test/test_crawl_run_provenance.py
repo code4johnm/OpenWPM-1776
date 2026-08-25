@@ -7,10 +7,12 @@ http_instrument or cookie_instrument.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 import pytest
 
-from openwpm.config import BrowserParams
+from openwpm.config import BrowserParams, ManagerParams
 from openwpm.errors import ConfigError
 from openwpm.instrumentation.controller import _headers_json
 from openwpm.instrumentation.provenance import (
@@ -94,7 +96,9 @@ def test_provenance_serializer_uses_live_playwright():
 
 
 class TestProvenanceAndOutcome(OpenWPMTest):
-    def get_config(self, data_dir=None):
+    def get_config(
+        self, data_dir: Optional[Path] = None
+    ) -> Tuple[ManagerParams, List[BrowserParams]]:
         manager_params, browser_params = self.get_test_config(data_dir)
         browser_params[0].cookie_instrument = False
         browser_params[0].http_instrument = False
@@ -109,10 +113,12 @@ class TestProvenanceAndOutcome(OpenWPMTest):
         )
         assert db_utils.query_db(db, "SELECT COUNT(*) FROM crawl_outcome")[0][0] == 0
 
-    def _visit_with(self, path: str, **flags) -> object:
+    def _visit_with(self, path: str, **flags: object) -> object:
         original = self.get_config
 
-        def patched(data_dir=None):
+        def patched(
+            data_dir: Optional[Path] = None,
+        ) -> Tuple[ManagerParams, List[BrowserParams]]:
             manager_params, browser_params = original(data_dir)
             for key, value in flags.items():
                 setattr(browser_params[0], key, value)

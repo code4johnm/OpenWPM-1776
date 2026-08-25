@@ -57,6 +57,7 @@ RESOURCE_TYPE_MAP = {
     "ping": "ping",
     "prefetch": "other",
     "preflight": "other",
+    "favicon": "image",
 }
 
 SKIP_URL_PREFIXES = (
@@ -384,6 +385,12 @@ class MeasurementController:
             data = item.get("content") if isinstance(item, dict) else item
             if not isinstance(data, dict):
                 continue
+            document_url = str(data.get("documentUrl") or frame_url or "")
+            page_url = top_url or document_url
+            if document_url.startswith(("about:", "chrome:", "chrome-extension:")):
+                continue
+            if page_url.startswith(("about:", "chrome:", "chrome-extension:")):
+                page_url = document_url
             record = {
                 "incognito": 0,
                 "extension_session_uuid": self.session_uuid,
@@ -397,8 +404,8 @@ class MeasurementController:
                 "script_col": str(data.get("scriptCol") or ""),
                 "func_name": data.get("funcName") or "",
                 "script_loc_eval": data.get("scriptLocEval") or "",
-                "document_url": frame_url,
-                "top_level_url": top_url,
+                "document_url": document_url,
+                "top_level_url": page_url,
                 "call_stack": data.get("callStack") or "",
                 "symbol": data.get("symbol") or "",
                 "operation": data.get("operation") or "",
@@ -409,7 +416,15 @@ class MeasurementController:
             if msg_type == "logCall" or data.get("operation") == "call":
                 args = data.get("args")
                 if args:
-                    record["arguments"] = json.dumps(args)
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            record["arguments"] = args
+                            args = None
+                    if args:
+                        # Historical OpenWPM / JSON.stringify: no spaces.
+                        record["arguments"] = json.dumps(args, separators=(",", ":"))
             self._save("javascript", record)
 
     # --- CDP ------------------------------------------------------------
@@ -546,7 +561,7 @@ class MeasurementController:
             page_url = page.url if page is not None else ""
         except Exception:
             page_url = ""
-        resource = request.resource_type
+        resource = (request.resource_type or "").lower()
         mapped = RESOURCE_TYPE_MAP.get(resource, "other")
         if resource == "document":
             try:
@@ -564,6 +579,9 @@ class MeasurementController:
         except Exception:
             frame_url = ""
         worker_url = self._worker_url(request)
+        if worker_url and mapped not in ("script", "main_frame", "sub_frame"):
+            is_xhr = 1
+            mapped = "xmlhttprequest"
         main_frame = mapped == "main_frame"
         if main_frame:
             top_url = url
