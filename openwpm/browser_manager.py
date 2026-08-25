@@ -623,11 +623,9 @@ class BrowserManagerHandle:
 
     def shutdown_browser(self, during_init: bool, force: bool = False) -> None:
         """Runs the closing tasks for this Browser/BrowserManager"""
-        # Close BrowserManager process and children
-        self.logger.debug("BROWSER %i: Closing browser manager..." % self.browser_id)
-        self.close_browser_manager(force=force)
-
-        # Archive browser profile (if requested)
+        # Close Chromium before tar.add. dump_profile of a live user-data-dir
+        # can block forever on SingletonSocket or SQLite WAL; the command
+        # docstring says call it with the browser closed.
         self.logger.debug(
             "BROWSER %i: during_init=%s | profile_archive_dir=%s"
             % (
@@ -636,23 +634,53 @@ class BrowserManagerHandle:
                 self.browser_params.profile_archive_dir,
             )
         )
-        if not during_init and self.browser_params.profile_archive_dir is not None:
-            self.logger.debug(
-                "BROWSER %i: Archiving browser profile directory to %s"
-                % (self.browser_id, self.browser_params.profile_archive_dir)
-            )
-            tar_path = self.browser_params.profile_archive_dir / "profile.tar.gz"
-            assert self.current_profile_path is not None
-            dump_profile(
-                browser_profile_path=self.current_profile_path,
-                tar_path=tar_path,
-                compress=True,
-                browser_params=self.browser_params,
-            )
+        self.logger.debug("BROWSER %i: Closing browser manager..." % self.browser_id)
+        # Snapshot History while Chromium still has a real SQLite header.
+        if (
+            not during_init
+            and self.browser_params.profile_archive_dir is not None
+            and self.current_profile_path is not None
+            and self.current_profile_path.exists()
+        ):
+            try:
+                from .commands.utils.firefox_profile import (
+                    sleep_until_sqlite_checkpoint,
+                    snapshot_chromium_history,
+                )
 
-        # Clean up temporary files
-        if self.current_profile_path is not None:
-            shutil.rmtree(self.current_profile_path, ignore_errors=True)
+                sleep_until_sqlite_checkpoint(self.current_profile_path, timeout=5)
+                # Side-file only. materialize() writes Default/History,
+                # which Chromium overwrites on quit.
+                snapshot_chromium_history(self.current_profile_path)
+            except Exception:
+                self.logger.debug(
+                    "BROWSER %i: Pre-close History snapshot failed",
+                    self.browser_id,
+                    exc_info=True,
+                )
+        self.close_browser_manager(force=force)
+
+        try:
+            if (
+                not during_init
+                and self.browser_params.profile_archive_dir is not None
+                and self.current_profile_path is not None
+                and self.current_profile_path.exists()
+            ):
+                self.logger.debug(
+                    "BROWSER %i: Archiving browser profile directory to %s"
+                    % (self.browser_id, self.browser_params.profile_archive_dir)
+                )
+                tar_path = self.browser_params.profile_archive_dir / "profile.tar.gz"
+                dump_profile(
+                    browser_profile_path=self.current_profile_path,
+                    tar_path=tar_path,
+                    compress=True,
+                    browser_params=self.browser_params,
+                )
+        finally:
+            if self.current_profile_path is not None:
+                shutil.rmtree(self.current_profile_path, ignore_errors=True)
 
 
 class BrowserManager(Process):
@@ -690,6 +718,7 @@ class BrowserManager(Process):
     def run_impl(self) -> None:
         assert self.browser_params.browser_id is not None
         display = None
+        session = None
         controller: Optional[MeasurementController] = None
 
         try:
@@ -783,5 +812,15 @@ class BrowserManager(Process):
                     controller.close()
                 except Exception:
                     pass
+            # Always stop Playwright so the Node driver and Chromium do not
+            # become cgroup orphans that keep a GitHub Actions step open.
+            if session is not None:
+                try:
+                    session.quit()
+                except Exception:
+                    pass
             if display is not None:
-                display.stop()
+                try:
+                    display.stop()
+                except Exception:
+                    pass

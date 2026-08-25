@@ -16,9 +16,85 @@ from .openwpmtest import NUM_BROWSERS
 pytest_plugins = "test.storage.fixtures"
 
 
+def _reap_browser_stragglers() -> None:
+    """Kill Chromium/Xvfb leftovers that are no longer pytest children."""
+    try:
+        import psutil
+    except ImportError:
+        return
+    markers = (
+        "ms-playwright",
+        "headless_shell",
+        "playwright/driver",
+        "chromium",
+        "Xvfb",
+    )
+    current = os.getpid()
+    for proc in psutil.process_iter(["pid", "cmdline", "name"]):
+        if proc.info["pid"] == current:
+            continue
+        try:
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            name = proc.info["name"] or ""
+            blob = f"{name} {cmdline}"
+            if any(marker in blob for marker in markers):
+                proc.kill()
+        except psutil.Error:
+            continue
+
+
+def _reap_leftover_children() -> None:
+    """Kill leftover worker processes so pytest can exit.
+
+    After the suite prints results, BrowserManager/StorageController children
+    (and their Chromium/Xvfb trees) can stay alive. GitHub-hosted runners then
+    wait on the job cgroup until timeout-minutes. Run 32819839281 cancelled
+    groups 4/5/7 after pytest had already printed the short summary; the
+    leftover PIDs were python workers, not just browsers. Run 32822663473
+    then SIGTERM'd pytest itself (exit 143) — reap children and browsers,
+    never the pytest process.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return
+    try:
+        children = psutil.Process().children(recursive=True)
+    except psutil.Error:
+        children = []
+    for child in children:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
+    if children:
+        psutil.wait_procs(children, timeout=5)
+    _reap_browser_stragglers()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    os.environ.pop("COVERAGE_PROCESS_START", None)
+    _reap_leftover_children()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config: pytest.Config) -> None:
+    _reap_leftover_children()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def enable_subprocess_coverage():
-    """Enable coverage collection in child processes when running under coverage."""
+    """Enable coverage collection in child processes when running under coverage.
+
+    GitHub Actions sets CI=true. Do not put COVERAGE_PROCESS_START back in
+    that environment: BrowserManager children then stay alive after pytest
+    prints results (groups 4/5/7 exit 143 / 30m cancel). scripts/ci.sh
+    unsets the variable; this fixture must not undo that.
+    """
+    if os.environ.get("CI") == "true":
+        os.environ.pop("COVERAGE_PROCESS_START", None)
+        return
     try:
         import coverage
 
@@ -75,11 +151,13 @@ TaskManagerCreator: TypeAlias = Callable[[FullConfig], Tuple[TaskManager, Path]]
 
 
 @pytest.fixture()
-def task_manager_creator(server: None, chromium_installed: None) -> TaskManagerCreator:
-    """We create a callable that returns a TaskManager that has
-    been configured with the Manager and BrowserParams"""
+def task_manager_creator(
+    server: None, chromium_installed: None
+) -> Generator[TaskManagerCreator, Any, None]:
+    """Return a factory that builds a TaskManager and closes leftovers."""
 
-    # We need to create the fixtures like this because usefixtures doesn't work on fixtures
+    managers: List[TaskManager] = []
+
     def _create_task_manager(params: FullConfig) -> Tuple[TaskManager, Path]:
         manager_params, browser_params = params
         db_path = manager_params.data_directory / "crawl-data.sqlite"
@@ -90,9 +168,17 @@ def task_manager_creator(server: None, chromium_installed: None) -> TaskManagerC
             structured_provider,
             None,
         )
+        managers.append(manager)
         return manager, db_path
 
-    return _create_task_manager
+    yield _create_task_manager
+    for manager in managers:
+        if getattr(manager, "closing", False):
+            continue
+        try:
+            manager.close()
+        except Exception:
+            pass
 
 
 class HttpParams(Protocol):

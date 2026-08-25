@@ -10,7 +10,10 @@ markers = [
 
 [tool.isort]
 profile = "black"
-known_future_library = "future"
+# Include the stdlib __future__ module. isort 8 with only "future" (the
+# backport package) was moving `from __future__ import annotations` below
+# other imports, which is a SyntaxError.
+known_future_library = ["__future__", "future"]
 known_first_party = ["openwpm", "openwpmtest", "test"]
 default_section = "THIRDPARTY"
 skip = ["venv", "ms-playwright", "firefox-bin"]

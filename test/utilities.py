@@ -10,6 +10,10 @@ BASE_TEST_URL_DOMAIN = "localhost"
 BASE_TEST_URL_NOPATH = "http://%s:%s" % (BASE_TEST_URL_DOMAIN, LOCAL_WEBSERVER_PORT)
 BASE_TEST_URL = "%s/test_pages" % BASE_TEST_URL_NOPATH
 BASE_TEST_URL_NOSCHEME = BASE_TEST_URL.split("//")[1]
+# Playwright/Chromium navigates schemeless "example.com"; Selenium refused
+# it. Connection-refused is a GetCommand neterror that still counts toward
+# failure_limit (NXDOMAIN does not).
+COMMAND_FAILURE_URL = "http://127.0.0.1:1/"
 
 
 class MyTCPServer(socketserver.TCPServer):
@@ -83,7 +87,22 @@ class MyHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
 
-        # 2. Abort connection after sending partial response.
+        # 2. Magic status codes for crawl_outcome tests.
+        if self.path.startswith("/MAGIC_STATUS/"):
+            parsed_path = urlparse(self.path)
+            try:
+                status = int(parsed_path.path.rstrip("/").rsplit("/", 1)[-1])
+            except (TypeError, ValueError):
+                status = 404
+            body = f"MAGIC_STATUS {status}".encode("ascii")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # 3. Abort connection after sending partial response.
         if self.path.startswith("/CONNECTION_ABORT/"):
             self.send_response(200)
             self.send_header("Content-Length", "99999")

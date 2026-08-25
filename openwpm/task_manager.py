@@ -159,6 +159,11 @@ class TaskManager:
             target=self._mark_command_sequences_complete, args=()
         )
         self.callback_thread.name = "OpenWPM-completion_handler"
+        # Non-daemon: a test that skips close() (or whose close never sets
+        # closing) keeps pytest alive after the terminal summary. Groups 4/5
+        # on 89ac37a printed results in ~7m then sat in the GHA cgroup until
+        # timeout-minutes.
+        self.callback_thread.daemon = True
         self.callback_thread.start()
 
     def __enter__(self):
@@ -260,13 +265,15 @@ class TaskManager:
                     if process.create_time() + 300 < check_time and (
                         (
                             pname.lower()
-                            in ("chromium", "chrome", "headless_shell", "chrome-headless-shell")
+                            in (
+                                "chromium",
+                                "chrome",
+                                "headless_shell",
+                                "chrome-headless-shell",
+                            )
                             and (process.pid not in browser_pids)
                         )
-                        or (
-                            pname == "Xvfb"
-                            and (process.pid not in display_pids)
-                        )
+                        or (pname == "Xvfb" and (process.pid not in display_pids))
                     ):
                         self.logger.debug(
                             "Process %s (pid: %i) with start "
@@ -320,15 +327,17 @@ class TaskManager:
                 and browser.command_thread
                 and browser.command_thread.is_alive()
             ):
-                # Waiting for the command_sequence to be finished
-                browser.command_thread.join()
+                # Bound the wait so a stuck command thread cannot hang close()
+                # (and therefore pytest) indefinitely.
+                join_timeout = (browser.current_timeout or 60) + 15
+                browser.command_thread.join(join_timeout)
             browser.shutdown_browser(during_init, force=not relaxed)
 
         self.sock.close()  # close socket to storage controller
         self.storage_controller_handle.shutdown(relaxed=relaxed)
         self.logging_server.close()
         if hasattr(self, "callback_thread"):
-            self.callback_thread.join()
+            self.callback_thread.join(30)
 
     def _check_failure_status(self) -> None:
         """Check the status of command failures. Raise exceptions as necessary
@@ -390,21 +399,29 @@ class TaskManager:
         """Polls the storage controller for saved records
         and calls their callbacks
         """
+        close_deadline = None
         while True:
-            if self.closing and not self.unsaved_command_sequences:
-                # we're shutting down and have no unprocessed callbacks
-                break
-
             visit_id_list = self.storage_controller_handle.get_new_completed_visits()
-            if not visit_id_list:
-                time.sleep(1)
-                continue
-
             for visit_id, successful in visit_id_list:
                 self.logger.debug("Invoking callback of visit_id %d", visit_id)
                 cs = self.unsaved_command_sequences.pop(visit_id, None)
                 if cs:
                     cs.mark_done(successful)
+
+            if self.closing and not self.unsaved_command_sequences:
+                break
+            if self.closing:
+                # Deliver in-flight callbacks, then stop. A leaked manager
+                # (no close()) relies on daemon=True so pytest can exit.
+                if close_deadline is None:
+                    close_deadline = time.time() + 15
+                if time.time() >= close_deadline:
+                    break
+                if not visit_id_list:
+                    time.sleep(0.1)
+                continue
+            if not visit_id_list:
+                time.sleep(1)
 
     def execute_command_sequence(
         self, command_sequence: CommandSequence, index: Optional[int] = None

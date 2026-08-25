@@ -6,6 +6,7 @@ from sqlite3 import Row
 from typing import List, Optional, Tuple
 
 import pytest
+
 from openwpm.browser import BrowserSession, By
 from openwpm.command_sequence import CommandSequence
 from openwpm.commands.browser_commands import GetCommand
@@ -109,13 +110,11 @@ WEBRTC_CALLS = {
 # we expect these strings to be present in the WebRTC SDP
 WEBRTC_SDP_OFFER_STRINGS = (
     "a=ice-options",
-    "o=mozilla...THIS_IS_SDPARTA",
     "IN IP4",
     "a=fingerprint:sha-256",
     "a=ice-options:",
     "a=msid-semantic",
     "m=application",
-    "a=sendrecv",
     "a=ice-pwd:",
     "a=ice-ufrag:",
     "a=mid:0",
@@ -149,13 +148,16 @@ AUDIO_SYMBOLS = {
 JS_STACK_TEST_URL = "%s/js_call_stack.html" % utilities.BASE_TEST_URL
 JS_STACK_TEST_SCRIPT_URL = "%s/stack.js" % utilities.BASE_TEST_URL
 
+# Chromium V8 line/column and eval-site numbers (inline scripts are
+# 1-indexed from the script block, not the HTML file). Chromium has no
+# navigator.buildID, so that Firefox-only eval get is omitted.
 JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "1",
-        "1",
+        "18",
         "",
-        "line 10 > eval",
+        "line 6 > eval",
         "",
         "window.navigator.appName",
         "get",
@@ -163,7 +165,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "3",
-        "17",
+        "34",
         "js_check_navigator",
         "",
         "",
@@ -173,7 +175,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_SCRIPT_URL,
         "1",
-        "1",
+        "18",
         "",
         "line 4 > eval",
         "",
@@ -182,18 +184,8 @@ JS_STACK_CALLS = {
     ),
     (
         JS_STACK_TEST_SCRIPT_URL,
-        "1",
-        "1",
-        "",
-        "line 11 > eval",
-        "",
-        "window.navigator.buildID",
-        "get",
-    ),
-    (
-        JS_STACK_TEST_SCRIPT_URL,
         "3",
-        "1",
+        "18",
         "anonymous",
         "line 14 > Function",
         "",
@@ -203,7 +195,7 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "7",
-        "21",
+        "38",
         "check_navigator",
         "",
         "",
@@ -213,9 +205,9 @@ JS_STACK_CALLS = {
     (
         JS_STACK_TEST_URL,
         "1",
-        "1",
+        "18",
         "",
-        "line 8 > eval",
+        "line 4 > eval",
         "",
         "window.navigator.appCodeName",
         "get",
@@ -227,11 +219,11 @@ JS_COOKIE_TEST_URL = "%s/js_cookie.html" % utilities.BASE_TEST_URL
 DOCUMENT_COOKIE_READ = (
     JS_COOKIE_TEST_URL,
     "8",
-    "21",
+    "30",
     "set_cookie",
     "",
-    "set_cookie@" + JS_COOKIE_TEST_URL + ":8:21"
-    "\nonload@" + JS_COOKIE_TEST_URL + ":1:1",
+    "set_cookie@" + JS_COOKIE_TEST_URL + ":8:30"
+    "\nonload@" + JS_COOKIE_TEST_URL + ":12:30",
     "window.document.cookie",
     "get",
     "test_cookie=Test-0123456789",
@@ -240,11 +232,11 @@ DOCUMENT_COOKIE_READ = (
 DOCUMENT_COOKIE_WRITE = (
     JS_COOKIE_TEST_URL,
     "7",
-    "9",
+    "25",
     "set_cookie",
     "",
-    "set_cookie@" + JS_COOKIE_TEST_URL + ":7:9"
-    "\nonload@" + JS_COOKIE_TEST_URL + ":1:1",
+    "set_cookie@" + JS_COOKIE_TEST_URL + ":7:25"
+    "\nonload@" + JS_COOKIE_TEST_URL + ":12:30",
     "window.document.cookie",
     "set",
     "test_cookie=Test-0123456789; " "expires=Tue, 31 Dec 2030 00:00:00 UTC; path=/",

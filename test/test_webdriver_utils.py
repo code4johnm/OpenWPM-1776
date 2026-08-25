@@ -8,7 +8,7 @@ from openwpm.utilities import db_utils
 def test_parse_neterror():
     text = (
         "Page.goto: net::ERR_NAME_NOT_RESOLVED at http://medmood.it/\n"
-        "Call log:\n  - navigating to \"http://medmood.it/\", waiting until \"domcontentloaded\""
+        'Call log:\n  - navigating to "http://medmood.it/", waiting until "domcontentloaded"'
     )
     assert parse_neterror(text) == "dnsNotFound"
 

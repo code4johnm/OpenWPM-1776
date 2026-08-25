@@ -12,15 +12,24 @@ import logging
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Union
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, Dialog, ElementHandle, Frame, Page, Playwright
+    from playwright.sync_api import (
+        BrowserContext,
+        Dialog,
+        ElementHandle,
+        Frame,
+        Page,
+        Playwright,
+    )
 
 logger = logging.getLogger("openwpm")
 
 
 def _playwright_errors():
-    from playwright.sync_api import Error, TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import Error
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     return Error, PlaywrightTimeoutError
+
 
 DEFAULT_VIEWPORT = {"width": 1366, "height": 768}
 
@@ -112,6 +121,7 @@ class BrowserSession:
         self.page = page
         self.profile_path = profile_path
         self.browser_pid = browser_pid
+        self.last_document_status: Optional[int] = None
         self._dismiss_dialogs()
 
     def _dismiss_dialogs(self) -> None:
@@ -157,8 +167,14 @@ class BrowserSession:
     def get(self, url: str, timeout: float = 30000) -> None:
         """Navigate. Timeout is milliseconds (Playwright convention)."""
         Error, PWTimeout = _playwright_errors()
+        self.last_document_status = None
         try:
-            self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            response = self.page.goto(
+                url, wait_until="domcontentloaded", timeout=timeout
+            )
+            # Final document after redirects. None → no crawl_outcome row.
+            if response is not None:
+                self.last_document_status = response.status
             try:
                 self.page.wait_for_load_state("load", timeout=min(timeout, 15000))
             except PWTimeout:
@@ -231,31 +247,55 @@ class BrowserSession:
         url = (self.current_url or "").lower()
         if url in ("about:blank", "about:blank/", "chrome://newtab/", ""):
             return
+        Error, _ = _playwright_errors()
         try:
             self.page.goto("about:blank", wait_until="commit", timeout=10000)
-        except PlaywrightError:
+        except Error:
             pass
 
     def close(self) -> None:
         """Close the current page (profile dump may still need the context)."""
+        Error, _ = _playwright_errors()
         try:
             if not self.page.is_closed():
                 self.page.close()
-        except PlaywrightError:
+        except Error:
             pass
 
     def close_context(self) -> None:
+        """Close the persistent context without waiting forever on in-flight IO.
+
+        /CONNECTION_ABORT/ advertises Content-Length 99999 and sends only
+        ``b"partial"``. Navigating to about:blank first aborts that download;
+        ``timeout=`` is passed only when Playwright accepts it.
+        """
+        if getattr(self, "context", None) is None:
+            return
+        Error, PWTimeout = _playwright_errors()
         try:
-            self.context.close()
-        except PlaywrightError:
+            self.reset_to_blank()
+        except Exception:
+            logger.debug("reset_to_blank before context.close failed", exc_info=True)
+        try:
+            try:
+                self.context.close(timeout=10_000)
+            except TypeError:
+                self.context.close()
+        except (Error, PWTimeout):
             pass
+        self.context = None  # type: ignore[assignment]
+        self.page = None  # type: ignore[assignment]
 
     def quit(self) -> None:
         self.close_context()
+        playwright = getattr(self, "playwright", None)
+        if playwright is None:
+            return
         try:
-            self.playwright.stop()
+            playwright.stop()
         except Exception:
             pass
+        self.playwright = None  # type: ignore[assignment]
 
     def cookies(self, urls: Optional[Sequence[str]] = None) -> list:
         if urls:

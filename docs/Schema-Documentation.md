@@ -11,6 +11,8 @@
   - [navigations](#navigations)
   - [callstacks](#callstacks)
   - [incomplete_visits](#incomplete_visits)
+  - [crawl_run_provenance](#crawl_run_provenance)
+  - [crawl_outcome](#crawl_outcome)
 
 This is an overview of all tables currently existing in OpenWPM. Over time we want to add
 a description for all fields and tables here.
@@ -220,3 +222,38 @@ update the description of the field here.
 | ----------- | ------ | -------- | ----------- |
 | visit_id    | int64  | False    |             |
 | instance_id | uint32 | False    |
+
+## crawl_run_provenance
+
+One row per browser when `BrowserParams.record_provenance` is True. Measures the
+browser stack (engine, display, live User-Agent, Playwright version). Off by
+default. Does not collect cookies, bodies, or screenshots.
+
+| Column Name        | Type   | nullable | Description |
+| ------------------ | ------ | -------- | ----------- |
+| browser_id         | uint32 | False    |             |
+| browser_engine     | string | False    | `chromium`  |
+| display_mode       | string | False    | `native`, `headless`, or `xvfb` |
+| headed             | bool   | False    | True when `display_mode != headless` |
+| playwright_version | string | False    | `playwright.__version__` at runtime |
+| user_agent         | string | False    | Live `navigator.userAgent` (not invented) |
+| instance_id        | uint32 | False    |             |
+
+## crawl_outcome
+
+One row per visit when `BrowserParams.record_crawl_outcome` is
+`status_codes_only` and the main document returned HTTP 403, 429, or 503.
+200s are not stored. This is not a success-rate metric. Primary key is
+`(visit_id, browser_id)` so a retried Get replaces the last document status.
+`http_status` and `outcome` are bound: 403/`forbidden`, 429/`rate_limited`,
+503/`unavailable`. The stored status is the final document after redirects
+(`page.goto` return value). A `None` response writes no row.
+
+| Column Name    | Type   | nullable | Description |
+| -------------- | ------ | -------- | ----------- |
+| visit_id       | int64  | False    |             |
+| browser_id     | uint32 | False    |             |
+| http_status    | int32  | False    | 403, 429, or 503 |
+| outcome        | string | False    | `forbidden`, `rate_limited`, or `unavailable` |
+| resource_scope | string | False    | Always `document` |
+| instance_id    | uint32 | False    |             |

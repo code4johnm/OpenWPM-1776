@@ -15,7 +15,7 @@ from openwpm.errors import CommandExecutionError, ProfileLoadError
 from openwpm.utilities import db_utils
 
 from . import openwpmtest
-from .utilities import BASE_TEST_URL
+from .utilities import BASE_TEST_URL, COMMAND_FAILURE_URL
 
 # TODO update these tests to make use of blocking commands
 
@@ -52,6 +52,10 @@ def test_save_incomplete_profile_error(default_params, task_manager_creator):
     )
     manager, _ = task_manager_creator((manager_params, browser_params[:1]))
     manager.get(BASE_TEST_URL)
+    # shutdown_browser closes Chromium before dump_profile so tar.add does
+    # not block on a live user-data-dir. Chromium rewrites Preferences on
+    # quit, so unlink the required file after the process has stopped.
+    manager.browsers[0].close_browser_manager()
     (manager.browsers[0].current_profile_path / "Default" / "Preferences").unlink()
     with pytest.raises(RuntimeError) as error:
         manager.close()
@@ -68,12 +72,17 @@ def test_crash_profile(default_params, task_manager_creator):
     manager, _ = task_manager_creator((manager_params, browser_params[:1]))
     try:
         manager.get(BASE_TEST_URL)  # So we have a profile
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Selenium requires scheme prefix
-        manager.get("example.com")  # Requires two commands to shut down
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
+        manager.get(COMMAND_FAILURE_URL)
     except CommandExecutionError:
         pass
+    finally:
+        try:
+            manager.close()
+        except CommandExecutionError:
+            pass
     assert (browser_params[0].profile_archive_dir / "profile.tar.gz").is_file()
 
 
