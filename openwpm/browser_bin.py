@@ -44,7 +44,7 @@ def chromium_executable() -> Path:
     roots.append(_LOCAL_BROWSERS)
     roots.append(Path.home() / ".cache" / "ms-playwright")
 
-    candidates = []
+    candidates: list[Path] = []
     for root in roots:
         if not root.exists():
             continue

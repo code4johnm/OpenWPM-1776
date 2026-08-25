@@ -1,6 +1,7 @@
 import logging
 import tarfile
 from pathlib import Path
+from typing import Any
 
 from openwpm.config import BrowserParamsInternal, ManagerParamsInternal
 
@@ -74,7 +75,7 @@ class DumpProfileCommand(BaseCommand):
         webdriver: BrowserSession,
         browser_params: BrowserParamsInternal,
         manager_params: ManagerParamsInternal,
-        extension_socket,
+        extension_socket: Any,
     ) -> None:
         if self.close_webdriver:
             webdriver.close_context()

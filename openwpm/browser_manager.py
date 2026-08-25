@@ -690,6 +690,7 @@ class BrowserManager(Process):
     def run_impl(self) -> None:
         assert self.browser_params.browser_id is not None
         display = None
+        session = None
         controller: Optional[MeasurementController] = None
 
         try:
@@ -783,5 +784,15 @@ class BrowserManager(Process):
                     controller.close()
                 except Exception:
                     pass
+            # Always stop Playwright so the Node driver and Chromium do not
+            # become cgroup orphans that keep a GitHub Actions step open.
+            if session is not None:
+                try:
+                    session.quit()
+                except Exception:
+                    pass
             if display is not None:
-                display.stop()
+                try:
+                    display.stop()
+                except Exception:
+                    pass

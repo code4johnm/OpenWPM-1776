@@ -15,6 +15,50 @@ from .openwpmtest import NUM_BROWSERS
 
 pytest_plugins = "test.storage.fixtures"
 
+_BROWSER_CMDLINE_TOKENS = (
+    "ms-playwright",
+    "headless_shell",
+    "playwright/driver",
+    "chrome-linux",
+    "Xvfb",
+)
+
+
+def _reap_leftover_browsers() -> None:
+    """Kill Playwright/Chromium/Xvfb children left after a crashed manager.
+
+    GitHub-hosted runners keep a step open until the job cgroup is idle, so a
+    leaked browser after pytest has printed results looks like a 30m timeout.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return
+    try:
+        children = psutil.Process().children(recursive=True)
+    except psutil.Error:
+        return
+    victims = []
+    for child in children:
+        try:
+            blob = f"{child.name() or ''} {' '.join(child.cmdline() or [])}"
+        except psutil.Error:
+            continue
+        if any(token in blob for token in _BROWSER_CMDLINE_TOKENS):
+            victims.append(child)
+    for child in victims:
+        try:
+            child.kill()
+        except psutil.Error:
+            pass
+    if victims:
+        psutil.wait_procs(victims, timeout=5)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    _reap_leftover_browsers()
+
 
 @pytest.fixture(scope="session", autouse=True)
 def enable_subprocess_coverage():

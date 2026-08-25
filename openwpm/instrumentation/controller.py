@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import domain_utils as du
@@ -31,6 +31,9 @@ from ..storage.storage_controller import (
 from ..storage.storage_providers import TableName
 from ..types import BrowserId, VisitId
 from .neterror import is_dns_failure_message, neterror_code
+
+if TYPE_CHECKING:
+    from playwright.sync_api import BrowserContext, Frame, Page, Request, Response
 
 logger = logging.getLogger("openwpm")
 
@@ -248,11 +251,11 @@ class MeasurementController:
         self.sock.store_record(TableName(table), visit_id, record)
 
     # --- JS instrument --------------------------------------------------
-    def _attach_js(self, context) -> None:
+    def _attach_js(self, context: BrowserContext) -> None:
         settings = self.browser_params.cleaned_js_instrument_settings or []
         testing = bool(self.manager_params.testing)
 
-        def _on_js_log(source, messages) -> None:
+        def _on_js_log(source: Any, messages: Any) -> None:
             self._record_js_messages(source, messages)
 
         context.expose_binding("__openwpm_js_log__", _on_js_log)
@@ -277,7 +280,7 @@ class MeasurementController:
             except Exception:
                 pass
 
-    def _record_js_messages(self, source, messages) -> None:
+    def _record_js_messages(self, source: Any, messages: Any) -> None:
         if not messages:
             return
         frame_url = ""
@@ -362,7 +365,10 @@ class MeasurementController:
         if not self.browser_params.dns_instrument:
             return
         error_text = params.get("errorText") or ""
-        if not is_dns_failure_message(error_text) and "NAME_NOT_RESOLVED" not in error_text:
+        if (
+            not is_dns_failure_message(error_text)
+            and "NAME_NOT_RESOLVED" not in error_text
+        ):
             # Still record DNS rows for NXDOMAIN; skip other failures here
             # (HTTP instrument records the failed request separately).
             if "NAME_NOT_RESOLVED" not in error_text:
@@ -380,7 +386,9 @@ class MeasurementController:
 
     def _on_cdp_cookie(self, params: Dict[str, Any]) -> None:
         cookie = params.get("cookie") or {}
-        removed = bool(params.get("removed") or params.get("cause") == "explicit" and False)
+        removed = bool(
+            params.get("removed") or params.get("cause") == "explicit" and False
+        )
         if "removed" in params:
             removed = bool(params["removed"])
         cause = params.get("cause") or "explicit"
@@ -411,7 +419,11 @@ class MeasurementController:
         mapped = RESOURCE_TYPE_MAP.get(resource, "other")
         if resource == "document":
             try:
-                mapped = "main_frame" if (frame is None or frame.parent_frame is None) else "sub_frame"
+                mapped = (
+                    "main_frame"
+                    if (frame is None or frame.parent_frame is None)
+                    else "sub_frame"
+                )
             except Exception:
                 mapped = "main_frame"
         is_xhr = 1 if resource in ("xhr", "fetch") else 0
@@ -421,7 +433,11 @@ class MeasurementController:
         except Exception:
             frame_url = ""
         main_frame = mapped == "main_frame"
-        triggering = "undefined" if main_frame else (_origin(frame_url) if frame_url else "undefined")
+        triggering = (
+            "undefined"
+            if main_frame
+            else (_origin(frame_url) if frame_url else "undefined")
+        )
         loading_origin = triggering
         loading_href = "undefined" if main_frame else (frame_url or "undefined")
         request_id = self._rid(_req_key(request))
@@ -483,7 +499,9 @@ class MeasurementController:
                     "new_request_id": str(request_id),
                     "response_status": 302,
                     "response_status_text": "",
-                    "headers": _headers_json({"Location": location} if location else {}),
+                    "headers": _headers_json(
+                        {"Location": location} if location else {}
+                    ),
                     "time_stamp": _utc_now(),
                 },
             )
@@ -492,7 +510,9 @@ class MeasurementController:
         try:
             self._record_response(response)
         except Exception:
-            logger.exception("BROWSER %i: HTTP response capture failed", self.browser_id)
+            logger.exception(
+                "BROWSER %i: HTTP response capture failed", self.browser_id
+            )
 
     def _record_response(self, response: Response) -> None:
         url = response.url
@@ -501,7 +521,9 @@ class MeasurementController:
         request = response.request
         request_id = self._rid(_req_key(request))
         extra = self._cdp_by_url.get(url, {})
-        from_cache = 1 if extra.get("fromDiskCache") or extra.get("fromPrefetchCache") else 0
+        from_cache = (
+            1 if extra.get("fromDiskCache") or extra.get("fromPrefetchCache") else 0
+        )
         headers = dict(response.headers)
         location = headers.get("location") or ""
         self._save(
@@ -663,9 +685,14 @@ class MeasurementController:
             is_session = 1
         else:
             try:
-                expiry = datetime.fromtimestamp(float(expires), tz=timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%S.%f"
-                )[:-3] + "Z"
+                if expires is None:
+                    raise ValueError("missing expires")
+                expiry = (
+                    datetime.fromtimestamp(float(expires), tz=timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%S.%f"
+                    )[:-3]
+                    + "Z"
+                )
             except Exception:
                 expiry = "9999-12-31T21:59:59.000Z"
             is_session = 0
@@ -780,21 +807,19 @@ def _parse_post(request: Any) -> Tuple[Optional[str], Optional[str]]:
     raw_json = json.dumps([[None, base64.b64encode(body_bytes).decode("ascii")]])
 
     if "application/x-www-form-urlencoded" in content_type and text is not None:
-        parsed = parse_qs(text, keep_blank_values=True)
-        return json.dumps(parsed), None
+        form = parse_qs(text, keep_blank_values=True)
+        return json.dumps(form), None
 
     if "multipart/form-data" in content_type and body_bytes:
-        parsed = _parse_multipart(body_bytes, content_type)
-        if parsed is not None:
-            return json.dumps(parsed), None
+        multipart = _parse_multipart(body_bytes, content_type)
+        if multipart is not None:
+            return json.dumps(multipart), None
 
     if "application/json" in content_type and text:
         try:
             obj = json.loads(text)
             if isinstance(obj, dict):
-                as_form = {
-                    k: v if isinstance(v, list) else [v] for k, v in obj.items()
-                }
+                as_form = {k: v if isinstance(v, list) else [v] for k, v in obj.items()}
                 return json.dumps(as_form), None
         except Exception:
             pass
@@ -814,7 +839,7 @@ def _parse_multipart(body: bytes, content_type: str) -> Optional[Dict[str, List[
             continue
         header, _, data = part.partition(b"\r\n\r\n")
         data = data.rstrip(b"\r\n-")
-        name_m = re.search(br'name="([^"]+)"', header)
+        name_m = re.search(rb'name="([^"]+)"', header)
         if not name_m:
             continue
         name = name_m.group(1).decode("utf-8", "replace")

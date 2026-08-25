@@ -12,7 +12,11 @@ import json
 import sys
 from pathlib import Path
 
-from openwpm.browser_bin import chromium_executable, chromium_version, ensure_browsers_path
+from openwpm.browser_bin import (
+    chromium_executable,
+    chromium_version,
+    ensure_browsers_path,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,7 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         page.goto(args.url, wait_until="domcontentloaded")
         title = page.title()
         print(f"Title: {title}")
-        if "example" not in title.lower() and args.url.rstrip("/") == "https://example.com":
+        if (
+            "example" not in title.lower()
+            and args.url.rstrip("/") == "https://example.com"
+        ):
             print("ERROR: expected Example Domain title", file=sys.stderr)
             context.close()
             browser.close()

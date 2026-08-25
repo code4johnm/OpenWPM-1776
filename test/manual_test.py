@@ -1,7 +1,7 @@
 """Interactive Playwright Chromium session for local debugging.
 
-    python -m test.manual_test
-    python -m test.manual_test --headed
+python -m test.manual_test
+python -m test.manual_test --headed
 """
 
 from os.path import dirname, join, realpath

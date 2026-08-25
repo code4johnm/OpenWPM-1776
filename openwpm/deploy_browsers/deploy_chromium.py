@@ -33,9 +33,7 @@ def deploy_chromium(
     chromium_executable()  # fail closed if the binary is missing
 
     browser_profile_path = Path(
-        tempfile.mkdtemp(
-            prefix="chromium_profile_", dir=browser_params.tmp_profile_dir
-        )
+        tempfile.mkdtemp(prefix="chromium_profile_", dir=browser_params.tmp_profile_dir)
     )
     status_queue.put(("STATUS", "Profile Created", browser_profile_path))
 
@@ -51,9 +49,7 @@ def deploy_chromium(
             "BROWSER %i: Loading recovered browser profile from: %s"
             % (browser_params.browser_id, browser_params.recovery_tar)
         )
-        load_profile(
-            browser_profile_path, browser_params, browser_params.recovery_tar
-        )
+        load_profile(browser_profile_path, browser_params, browser_params.recovery_tar)
     status_queue.put(("STATUS", "Profile Tar", None))
 
     display_mode = browser_params.display_mode

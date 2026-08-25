@@ -12,15 +12,24 @@ import logging
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Union
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, Dialog, ElementHandle, Frame, Page, Playwright
+    from playwright.sync_api import (
+        BrowserContext,
+        Dialog,
+        ElementHandle,
+        Frame,
+        Page,
+        Playwright,
+    )
 
 logger = logging.getLogger("openwpm")
 
 
 def _playwright_errors():
-    from playwright.sync_api import Error, TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import Error
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     return Error, PlaywrightTimeoutError
+
 
 DEFAULT_VIEWPORT = {"width": 1366, "height": 768}
 
@@ -231,31 +240,38 @@ class BrowserSession:
         url = (self.current_url or "").lower()
         if url in ("about:blank", "about:blank/", "chrome://newtab/", ""):
             return
+        Error, _ = _playwright_errors()
         try:
             self.page.goto("about:blank", wait_until="commit", timeout=10000)
-        except PlaywrightError:
+        except Error:
             pass
 
     def close(self) -> None:
         """Close the current page (profile dump may still need the context)."""
+        Error, _ = _playwright_errors()
         try:
             if not self.page.is_closed():
                 self.page.close()
-        except PlaywrightError:
+        except Error:
             pass
 
     def close_context(self) -> None:
+        Error, _ = _playwright_errors()
         try:
             self.context.close()
-        except PlaywrightError:
+        except Error:
             pass
 
     def quit(self) -> None:
         self.close_context()
+        playwright = getattr(self, "playwright", None)
+        if playwright is None:
+            return
         try:
-            self.playwright.stop()
+            playwright.stop()
         except Exception:
             pass
+        self.playwright = None  # type: ignore[assignment]
 
     def cookies(self, urls: Optional[Sequence[str]] = None) -> list:
         if urls:

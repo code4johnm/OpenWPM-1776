@@ -5,6 +5,7 @@ from openwpm.browser import BrowserSession, By
 from openwpm.commands.types import BaseCommand
 from openwpm.config import BrowserParams, ManagerParamsInternal
 from openwpm.instrumentation.controller import MeasurementController
+from openwpm.socket_interface import ClientSocket
 from openwpm.storage.sql_provider import SQLiteStorageProvider
 from openwpm.storage.storage_providers import TableName
 from openwpm.task_manager import TaskManager

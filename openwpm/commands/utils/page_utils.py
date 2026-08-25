@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import random
 import time
+from typing import Any, Callable, Dict, List, Optional
 from urllib import parse as urlparse
 
 import domain_utils as du
 
-from ...browser import BrowserError, By, BrowserSession, NetError, SessionElement
+from ...browser import BrowserError, BrowserSession, By, NetError, SessionElement
 from ...instrumentation.neterror import parse_neterror
 
 # Re-export so callers that imported parse_neterror from webdriver_utils still work
@@ -54,7 +55,9 @@ def is_loaded(session: BrowserSession) -> bool:
         return False
 
 
-def wait_until_loaded(session: BrowserSession, timeout, period=0.25, min_time=0):
+def wait_until_loaded(
+    session: BrowserSession, timeout: float, period: float = 0.25, min_time: float = 0
+) -> bool:
     start_time = time.time()
     mustend = time.time() + timeout
     while time.time() < mustend:
@@ -66,7 +69,7 @@ def wait_until_loaded(session: BrowserSession, timeout, period=0.25, min_time=0)
     return False
 
 
-def get_intra_links(session: BrowserSession, url: str):
+def get_intra_links(session: BrowserSession, url: str) -> List[SessionElement]:
     ps1 = du.get_ps_plus_1(url)
     links = []
     for elem in session.find_elements(By.TAG_NAME, "a"):
@@ -84,7 +87,7 @@ def get_intra_links(session: BrowserSession, url: str):
     return links
 
 
-def execute_script_with_retry(session: BrowserSession, script: str):
+def execute_script_with_retry(session: BrowserSession, script: str) -> Any:
     try:
         return session.execute_script(script)
     except BrowserError:
@@ -98,7 +101,12 @@ def is_displayed(element: SessionElement) -> bool:
         return False
 
 
-def execute_in_all_frames(session: BrowserSession, func, kwargs=None, **_unused):
+def execute_in_all_frames(
+    session: BrowserSession,
+    func: Callable[..., Any],
+    kwargs: Optional[Dict[str, Any]] = None,
+    **_unused: Any,
+) -> None:
     """Apply ``func(session, frame_stack, **kwargs)`` to every frame.
 
     ``frame_stack`` is a list whose first item is ``"default"`` and whose

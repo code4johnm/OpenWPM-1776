@@ -252,8 +252,7 @@ class RecursiveDumpPageSourceCommand(BaseCommand):
                 "doc_url": frame.url,
                 "source": source,
                 "iframes": {
-                    str(i): collect(child)
-                    for i, child in enumerate(frame.child_frames)
+                    str(i): collect(child) for i, child in enumerate(frame.child_frames)
                 },
             }
 

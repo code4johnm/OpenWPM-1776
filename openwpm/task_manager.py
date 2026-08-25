@@ -260,13 +260,15 @@ class TaskManager:
                     if process.create_time() + 300 < check_time and (
                         (
                             pname.lower()
-                            in ("chromium", "chrome", "headless_shell", "chrome-headless-shell")
+                            in (
+                                "chromium",
+                                "chrome",
+                                "headless_shell",
+                                "chrome-headless-shell",
+                            )
                             and (process.pid not in browser_pids)
                         )
-                        or (
-                            pname == "Xvfb"
-                            and (process.pid not in display_pids)
-                        )
+                        or (pname == "Xvfb" and (process.pid not in display_pids))
                     ):
                         self.logger.debug(
                             "Process %s (pid: %i) with start "
@@ -320,8 +322,10 @@ class TaskManager:
                 and browser.command_thread
                 and browser.command_thread.is_alive()
             ):
-                # Waiting for the command_sequence to be finished
-                browser.command_thread.join()
+                # Bound the wait so a stuck command thread cannot hang close()
+                # (and therefore pytest) indefinitely.
+                join_timeout = (browser.current_timeout or 60) + 15
+                browser.command_thread.join(join_timeout)
             browser.shutdown_browser(during_init, force=not relaxed)
 
         self.sock.close()  # close socket to storage controller
