@@ -635,6 +635,27 @@ class BrowserManagerHandle:
             )
         )
         self.logger.debug("BROWSER %i: Closing browser manager..." % self.browser_id)
+        # Snapshot History while Chromium still has a real SQLite header.
+        if (
+            not during_init
+            and self.browser_params.profile_archive_dir is not None
+            and self.current_profile_path is not None
+            and self.current_profile_path.exists()
+        ):
+            try:
+                from .commands.utils.firefox_profile import (
+                    materialize_chromium_history,
+                    sleep_until_sqlite_checkpoint,
+                )
+
+                sleep_until_sqlite_checkpoint(self.current_profile_path, timeout=5)
+                materialize_chromium_history(self.current_profile_path)
+            except Exception:
+                self.logger.debug(
+                    "BROWSER %i: Pre-close History snapshot failed",
+                    self.browser_id,
+                    exc_info=True,
+                )
         self.close_browser_manager(force=force)
 
         try:

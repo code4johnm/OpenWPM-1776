@@ -74,6 +74,75 @@ def checkpoint_chromium_sqlite(profile_dir: Union[str, Path]) -> None:
             continue
 
 
+def _sqlite_has_urls_table(db_path: Path) -> bool:
+    if not db_path.is_file() or db_path.stat().st_size == 0:
+        return False
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='urls'"
+            ).fetchall()
+            return bool(rows)
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False
+
+
+def _backup_sqlite(src: Path, dest: Path) -> bool:
+    try:
+        src_con = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True, timeout=5)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".openwpm-tmp")
+        if tmp.exists():
+            tmp.unlink()
+        dst_con = sqlite3.connect(tmp)
+        try:
+            src_con.backup(dst_con)
+        finally:
+            dst_con.close()
+            src_con.close()
+        tmp.replace(dest)
+        for suffix in ("-wal", "-shm"):
+            leftover = Path(str(dest) + suffix)
+            if leftover.exists():
+                leftover.unlink()
+        return _sqlite_has_urls_table(dest)
+    except sqlite3.Error:
+        return False
+
+
+def materialize_chromium_history(profile_dir: Union[str, Path]) -> None:
+    """Write a standalone Default/History that has a queryable ``urls`` table.
+
+    After Chromium exits, History may be 0 bytes with data only in WAL.
+    Open read-only (applies WAL) and backup to a clean file so extract +
+    ``SELECT url FROM urls`` works without the WAL sidecar.
+    """
+    root = Path(profile_dir)
+    checkpoint_chromium_sqlite(root)
+    dest = root / "Default" / "History"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    candidates = []
+    for base in (root / "Default", root):
+        if not base.is_dir():
+            continue
+        for path in base.glob("History*"):
+            if path.is_file() and not str(path).endswith(("-wal", "-shm")):
+                candidates.append(path)
+        named = base / "History"
+        if named.is_file() and named not in candidates:
+            candidates.append(named)
+    if dest.is_file() and dest not in candidates:
+        candidates.insert(0, dest)
+    for src in candidates:
+        if _sqlite_has_urls_table(src) or _backup_sqlite(src, dest):
+            if src != dest and _sqlite_has_urls_table(src):
+                _backup_sqlite(src, dest)
+            return
+
+
 def sleep_until_sqlite_checkpoint(
     profile_dir: Union[str, Path], timeout: int = 60
 ) -> None:

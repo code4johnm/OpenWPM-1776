@@ -8,7 +8,10 @@ from openwpm.config import BrowserParamsInternal, ManagerParamsInternal
 from ..browser import BrowserSession
 from ..errors import ProfileLoadError
 from .types import BaseCommand
-from .utils.firefox_profile import sleep_until_sqlite_checkpoint
+from .utils.firefox_profile import (
+    materialize_chromium_history,
+    sleep_until_sqlite_checkpoint,
+)
 
 logger = logging.getLogger("openwpm")
 
@@ -64,6 +67,7 @@ def dump_profile(
 
     # Chromium History/Cookies live in SQLite WAL until checkpoint.
     sleep_until_sqlite_checkpoint(browser_profile_path)
+    materialize_chromium_history(browser_profile_path)
     tar.add(browser_profile_path, arcname="", filter=_profile_tar_filter)
     archived_items = tar.getnames()
     tar.close()
@@ -101,7 +105,9 @@ class DumpProfileCommand(BaseCommand):
     ) -> None:
         if self.close_webdriver:
             webdriver.close_context()
-            sleep_until_sqlite_checkpoint(browser_params.profile_path)
+            profile_path = browser_params.profile_path
+            if profile_path is not None:
+                sleep_until_sqlite_checkpoint(profile_path)
 
         assert browser_params.profile_path is not None
         dump_profile(

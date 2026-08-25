@@ -256,6 +256,9 @@ class MeasurementController:
         self._seen_favicon_paths: set = set()
         self._cdp_initiators: Dict[str, str] = {}
         self._seen_response_urls: set = set()
+        self._cdp_bodies: Dict[str, bytes] = {}
+        self._pending_responses: List[Dict[str, Any]] = []
+        self._worker_cdps: List[Any] = []
         self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
@@ -300,6 +303,10 @@ class MeasurementController:
 
     def close(self) -> None:
         try:
+            self._flush_pending_responses()
+        except Exception:
+            pass
+        try:
             self.sock.close()
         except Exception:
             pass
@@ -320,6 +327,7 @@ class MeasurementController:
         self.visit_id = visit_id
 
     def initialize(self, visit_id: VisitId) -> None:
+        self._flush_pending_responses()
         self.visit_id = visit_id
         self.event_ordinal = 0
         self._seen_favicon_paths = set()
@@ -328,6 +336,7 @@ class MeasurementController:
         self._cdp_cache_urls = set()
         self._recorded_worker_request_keys = set()
         self._pending_cdp_worker = []
+        self._cdp_bodies = {}
         self._flush_js_buffer()
         self.sock.socket.send(
             (
@@ -343,6 +352,9 @@ class MeasurementController:
     def finalize(self, visit_id: VisitId, success: bool = True) -> None:
         self._flush_js()
         self._flush_pending_cdp_worker_requests()
+        # Pump on the command thread (not inside a Playwright event).
+        self._pump_playwright(300)
+        self._flush_pending_responses()
         if self.browser_params.cookie_instrument:
             self._snapshot_cookies("manual-export")
         self.sock.socket.send(
@@ -448,7 +460,10 @@ class MeasurementController:
     def _flush_js(self) -> None:
         if not self.browser_params.js_instrument:
             return
-        for page in list(self.session.context.pages):
+        context = getattr(self.session, "context", None)
+        if context is None:
+            return
+        for page in list(context.pages):
             if page.is_closed():
                 continue
             try:
@@ -543,6 +558,7 @@ class MeasurementController:
             cdp.on("Network.responseReceived", self._on_cdp_response)
             cdp.on("Network.requestServedFromCache", self._on_cdp_served_from_cache)
             cdp.on("Network.loadingFailed", self._on_cdp_loading_failed)
+            cdp.on("Network.loadingFinished", self._on_cdp_loading_finished)
             if self.browser_params.cookie_instrument:
                 cdp.on("Network.cookieChanged", self._on_cdp_cookie)
             cdp.send("Network.enable")
@@ -655,6 +671,17 @@ class MeasurementController:
                 error=None,
             )
 
+    def _on_cdp_loading_finished(self, params: Dict[str, Any]) -> None:
+        if not self.browser_params.save_content:
+            return
+        rid = str(params.get("requestId") or "")
+        url = self._cdp_id_to_url.get(rid) or ""
+        if not url:
+            return
+        body = self._cdp_response_body(url)
+        if body:
+            self._cdp_bodies[url] = body
+
     def _on_cdp_loading_failed(self, params: Dict[str, Any]) -> None:
         if not self.browser_params.dns_instrument:
             return
@@ -716,10 +743,48 @@ class MeasurementController:
             for req_url, method in pending:
                 self._ensure_worker_request_recorded(req_url, url, method)
         try:
+            wcdp = self.session.context.new_cdp_session(worker)
+            worker_url = url
+
+            def _on_worker_cdp_request(
+                params: Dict[str, Any], wu: str = worker_url
+            ) -> None:
+                self._on_worker_session_cdp_request(params, wu)
+
+            wcdp.on("Network.requestWillBeSent", _on_worker_cdp_request)
+            wcdp.send("Network.enable")
+            self._worker_cdps.append(wcdp)
+        except Exception:
+            logger.debug(
+                "BROWSER %i: worker CDP session failed",
+                self.browser_id,
+                exc_info=True,
+            )
+        try:
             worker.on("request", self._on_request)
             worker.on("response", self._on_response)
         except Exception:
             pass
+
+    def _on_worker_session_cdp_request(
+        self, params: Dict[str, Any], worker_url: str
+    ) -> None:
+        request = params.get("request") or {}
+        req_url = request.get("url") or ""
+        if not req_url or _should_skip_url(req_url) or not worker_url:
+            return
+        if req_url.split("?")[0] == worker_url.split("?")[0]:
+            return
+        self._cdp_initiators[req_url] = worker_url
+        self._cdp_initiator_types[req_url] = "worker"
+        rid = params.get("requestId") or ""
+        if rid:
+            self._cdp_id_to_url[str(rid)] = req_url
+            rec = self._cdp_by_url.setdefault(req_url, {})
+            rec["requestId"] = rid
+        self._ensure_worker_request_recorded(
+            req_url, worker_url, request.get("method") or "GET"
+        )
 
     def _flush_pending_cdp_worker_requests(self) -> None:
         worker_url = next(iter(self._dedicated_workers), None)
@@ -1017,19 +1082,6 @@ class MeasurementController:
             or (cdp_rid and cdp_rid in self._cdp_cache_ids)
             or url in self._cdp_cache_urls
         )
-        # finished() / time.sleep() do not process CDP. Pump only on a
-        # repeat URL so requestServedFromCache can mark visit-2 hits.
-        if url in self._seen_response_urls and not already_cached:
-            self._pump_playwright(200)
-            extra = self._cdp_by_url.get(url, extra)
-            cdp_rid = extra.get("requestId") or cdp_rid
-            already_cached = bool(
-                extra.get("fromCache")
-                or extra.get("fromDiskCache")
-                or extra.get("fromPrefetchCache")
-                or (cdp_rid and cdp_rid in self._cdp_cache_ids)
-                or url in self._cdp_cache_urls
-            )
         from_cache = 1 if already_cached else 0
         self._seen_response_urls.add(url)
         header_pairs = _header_pairs_from_playwright(response)
@@ -1044,27 +1096,29 @@ class MeasurementController:
         content_hash = None
         if self.browser_params.save_content:
             content_hash = self._maybe_save_body(response, request_id)
-        self._save(
-            "http_responses",
-            {
-                "incognito": 0,
-                "extension_session_uuid": self.session_uuid,
-                "event_ordinal": self._next_ordinal(),
-                "window_id": 1,
-                "tab_id": self._tab_id(page),
-                "frame_id": 0,
-                "url": url,
-                "method": request.method,
-                "response_status": response.status,
-                "response_status_text": response.status_text or "",
-                "is_cached": from_cache,
-                "headers": _headers_json(header_pairs),
-                "request_id": request_id,
-                "location": location,
-                "time_stamp": _utc_now(),
-                "content_hash": content_hash,
-            },
-        )
+        record = {
+            "incognito": 0,
+            "extension_session_uuid": self.session_uuid,
+            "event_ordinal": self._next_ordinal(),
+            "window_id": 1,
+            "tab_id": self._tab_id(page),
+            "frame_id": 0,
+            "url": url,
+            "method": request.method,
+            "response_status": response.status,
+            "response_status_text": response.status_text or "",
+            "is_cached": from_cache,
+            "headers": _headers_json(header_pairs),
+            "request_id": request_id,
+            "location": location,
+            "time_stamp": _utc_now(),
+            "content_hash": content_hash,
+        }
+        if self.visit_id is not None:
+            record["visit_id"] = int(self.visit_id)
+        # Defer write so finalize can pump requestServedFromCache on the
+        # command thread. wait_for_timeout inside this handler deadlocks.
+        self._pending_responses.append(record)
         if self.browser_params.dns_instrument:
             used = extra.get("remoteIPAddress")
             if used:
@@ -1074,6 +1128,23 @@ class MeasurementController:
                     used_address=used,
                     error=None,
                 )
+
+    def _flush_pending_responses(self) -> None:
+        pending = self._pending_responses
+        self._pending_responses = []
+        for record in pending:
+            url = str(record.get("url") or "")
+            extra = self._cdp_by_url.get(url, {})
+            cdp_rid = extra.get("requestId")
+            if (
+                extra.get("fromCache")
+                or extra.get("fromDiskCache")
+                or extra.get("fromPrefetchCache")
+                or (cdp_rid and cdp_rid in self._cdp_cache_ids)
+                or url in self._cdp_cache_urls
+            ):
+                record["is_cached"] = 1
+            self._save("http_responses", record)
 
     def _on_request_failed(self, request: Request) -> None:
         err = ""
@@ -1130,27 +1201,28 @@ class MeasurementController:
         option = self.browser_params.save_content
         frame = self._safe_frame(response.request)
         resource = _request_resource_type(response.request, frame)
-        # Finish every response when content capture is on so sibling
-        # script/iframe bodies are still readable (Playwright evicts
-        # unfinished bodies). CONNECTION_ABORT tests keep save_content off.
-        if option:
-            _playwright_call_timeout(response.finished, allow_unbounded=True)
+        path = urlparse(response.url).path.lower()
         if option is True:
             pass
         elif isinstance(option, str):
             allowed = {s.strip() for s in option.split(",") if s.strip()}
             if resource not in allowed:
-                return None
+                if "script" in allowed and path.endswith(".js"):
+                    resource = "script"
+                elif {"main_frame", "sub_frame"} & allowed and path.endswith(
+                    (".html", ".htm")
+                ):
+                    resource = resource if resource in allowed else "sub_frame"
+                else:
+                    return None
+                if resource not in allowed:
+                    return None
         else:
             return None
-        body: Optional[bytes] = None
-        raw = _playwright_call_timeout(response.body, allow_unbounded=True)
-        if raw is not None:
-            body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+        # CONNECTION_ABORT tests keep save_content off.
+        _playwright_call_timeout(response.finished, allow_unbounded=True)
+        body: Optional[bytes] = self._cdp_bodies.get(response.url)
         if not body:
-            body = self._cdp_response_body(response.url)
-        if not body:
-            self._pump_playwright(200)
             raw = _playwright_call_timeout(response.body, allow_unbounded=True)
             if raw is not None:
                 body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
