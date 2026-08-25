@@ -38,6 +38,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("openwpm")
 
+# Playwright Response.finished()/body() wait until Content-Length bytes
+# arrive and accept no timeout. /CONNECTION_ABORT/ sends Content-Length
+# 99999 and only b"partial", which pins the sync dispatcher until GHA
+# cancels the job. Never call those waits unbounded.
+_RESPONSE_IO_TIMEOUT_MS = 5000
+
 INJECT_JS = Path(__file__).resolve().parent / "js_inject.js"
 
 RESOURCE_TYPE_MAP = {
@@ -73,6 +79,20 @@ DNS_FAIL_TOKENS = (
     "ERR_NAME_NOT_RESOLVED",
     "net::ERR_NAME_NOT_RESOLVED",
 )
+
+
+def _playwright_call_timeout(fn: Any, timeout_ms: int = _RESPONSE_IO_TIMEOUT_MS) -> Any:
+    """Invoke a Playwright wait only if it accepts ``timeout=``.
+
+    Returns None on timeout, TypeError (no timeout API — do not call
+    unbounded), or any other Playwright error.
+    """
+    try:
+        return fn(timeout=timeout_ms)
+    except TypeError:
+        return None
+    except Exception:
+        return None
 
 
 def _utc_now() -> str:
@@ -788,10 +808,7 @@ class MeasurementController:
                 return
         request = response.request
         request_id = self._rid(_req_key(request))
-        try:
-            response.finished()
-        except Exception:
-            pass
+        _playwright_call_timeout(response.finished)
         extra = self._cdp_by_url.get(url, {})
         cdp_rid = extra.get("requestId")
         from_cache = (
@@ -871,7 +888,16 @@ class MeasurementController:
         if not rid or self._cdp is None:
             return None
         try:
-            result = self._cdp.send("Network.getResponseBody", {"requestId": rid})
+            send = self._cdp.send
+            try:
+                result = send(
+                    "Network.getResponseBody",
+                    {"requestId": rid},
+                    timeout=_RESPONSE_IO_TIMEOUT_MS,
+                )
+            except TypeError:
+                # send() has no timeout=; do not call it unbounded.
+                return None
         except Exception:
             return None
         if not result:
@@ -906,17 +932,11 @@ class MeasurementController:
                 return None
         else:
             return None
-        try:
-            response.finished()
-        except Exception:
-            pass
+        _playwright_call_timeout(response.finished)
         body: Optional[bytes] = None
-        try:
-            raw = response.body()
-            if raw is not None:
-                body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
-        except Exception:
-            body = None
+        raw = _playwright_call_timeout(response.body)
+        if raw is not None:
+            body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
         if body is None:
             body = self._cdp_response_body(response.url)
         if not body:
