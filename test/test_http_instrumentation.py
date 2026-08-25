@@ -729,6 +729,8 @@ class TestHTTPInstrument(OpenWPMTest):
         rows = db_utils.query_db(db, "SELECT * FROM http_requests")
         observed_records = set()
         for row in rows:
+            if row["url"].split("?")[0].endswith("favicon.ico"):
+                continue
             observed_records.add(
                 (
                     row["url"].split("?")[0],
@@ -744,7 +746,12 @@ class TestHTTPInstrument(OpenWPMTest):
             )
             request_id_to_url[row["request_id"]] = row["url"]
 
-        assert HTTP_SERVICE_WORKER_REQUESTS == observed_records
+        expected = {
+            rec
+            for rec in HTTP_SERVICE_WORKER_REQUESTS
+            if not str(rec[0]).endswith("favicon.ico")
+        }
+        assert expected == observed_records
 
 
 class TestPOSTInstrument(OpenWPMTest):

@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import re
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,6 +173,48 @@ def _should_skip_url(url: str) -> bool:
     return url.startswith(SKIP_URL_PREFIXES)
 
 
+def _js_value_to_str(value: Any) -> str:
+    """Match historical extension serialization: undefined/true/compact JSON."""
+    if value is None:
+        return "undefined"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return str(value)
+
+
+def _request_resource_type(request: Any, frame: Optional["Frame"]) -> str:
+    raw = (getattr(request, "resource_type", None) or "").lower()
+    mapped = RESOURCE_TYPE_MAP.get(raw, "other")
+    if raw == "document":
+        try:
+            return (
+                "main_frame"
+                if (frame is None or frame.parent_frame is None)
+                else "sub_frame"
+            )
+        except Exception:
+            return "main_frame"
+    if mapped != "other":
+        return mapped
+    path = urlparse(getattr(request, "url", "") or "").path.lower()
+    if path.endswith(".js"):
+        return "script"
+    if path.endswith(".css"):
+        return "stylesheet"
+    if path.endswith((".html", ".htm")):
+        try:
+            return (
+                "main_frame"
+                if (frame is None or getattr(frame, "parent_frame", None) is None)
+                else "sub_frame"
+            )
+        except Exception:
+            return "main_frame"
+    return mapped
+
+
 class MeasurementController:
     """Per-browser instrumentation attached to a Playwright context.
 
@@ -200,7 +241,11 @@ class MeasurementController:
         self._cdp_by_url: Dict[str, Dict[str, Any]] = {}
         self._cdp_id_to_url: Dict[str, str] = {}
         self._cdp_cache_ids: set = set()
+        self._cdp_cache_urls: set = set()
+        self._cdp_initiator_types: Dict[str, str] = {}
         self._dedicated_workers: set = set()
+        self._recorded_worker_request_keys: set = set()
+        self._pending_cdp_worker: List[Tuple[str, str]] = []
         self._seen_dns: set = set()
         self._cookie_keys: set = set()
         self._cdp = None
@@ -210,6 +255,7 @@ class MeasurementController:
         self._js_buffer: List[Dict[str, Any]] = []
         self._seen_favicon_paths: set = set()
         self._cdp_initiators: Dict[str, str] = {}
+        self._seen_response_urls: set = set()
         self._provenance_written = False
         self.sock = DataSocket(
             manager_params.storage_controller_address,  # type: ignore[arg-type]
@@ -278,6 +324,10 @@ class MeasurementController:
         self.event_ordinal = 0
         self._seen_favicon_paths = set()
         self._current_top_url = None
+        self._cdp_cache_ids = set()
+        self._cdp_cache_urls = set()
+        self._recorded_worker_request_keys = set()
+        self._pending_cdp_worker = []
         self._flush_js_buffer()
         self.sock.socket.send(
             (
@@ -292,6 +342,7 @@ class MeasurementController:
 
     def finalize(self, visit_id: VisitId, success: bool = True) -> None:
         self._flush_js()
+        self._flush_pending_cdp_worker_requests()
         if self.browser_params.cookie_instrument:
             self._snapshot_cookies("manual-export")
         self.sock.socket.send(
@@ -426,11 +477,28 @@ class MeasurementController:
             if not isinstance(data, dict):
                 continue
             document_url = str(data.get("documentUrl") or frame_url or "")
-            page_url = top_url or document_url
+            top_from_js = str(data.get("topLevelUrl") or "")
+            page_url = top_from_js or top_url or document_url
             if document_url.startswith(("about:", "chrome:", "chrome-extension:")):
                 continue
             if page_url.startswith(("about:", "chrome:", "chrome-extension:")):
-                page_url = document_url
+                page_url = self._current_top_url or document_url
+            if (
+                document_url
+                and page_url == document_url
+                and self._current_top_url
+                and self._current_top_url != document_url
+            ):
+                page_url = self._current_top_url
+            if (
+                page_url
+                and not page_url.startswith(("about:", "chrome:", "chrome-extension:"))
+                and (
+                    not self._current_top_url
+                    or self._current_top_url.startswith(("about:", "chrome:"))
+                )
+            ):
+                self._current_top_url = page_url
             record = {
                 "incognito": 0,
                 "extension_session_uuid": self.session_uuid,
@@ -449,7 +517,7 @@ class MeasurementController:
                 "call_stack": data.get("callStack") or "",
                 "symbol": data.get("symbol") or "",
                 "operation": data.get("operation") or "",
-                "value": data.get("value") if data.get("value") is not None else "",
+                "value": _js_value_to_str(data.get("value")),
                 "arguments": None,
                 "time_stamp": _utc_now(),
             }
@@ -491,10 +559,44 @@ class MeasurementController:
         rid = params.get("requestId") or ""
         initiator = params.get("initiator") or {}
         init_url = _cdp_initiator_url(initiator)
+        init_type = str(initiator.get("type") or "").lower()
         if url:
             self._cdp_initiators[url] = init_url
+            self._cdp_initiator_types[url] = init_type
+            rec = self._cdp_by_url.get(url) or {}
+            rec["fromCache"] = bool(rid and rid in self._cdp_cache_ids)
+            rec["fromDiskCache"] = bool(rec.get("fromCache"))
+            rec["requestId"] = rid
+            rec["initiatorType"] = init_type
+            self._cdp_by_url[url] = rec
         if rid and url:
             self._cdp_id_to_url[rid] = url
+        if (
+            self.browser_params.http_instrument
+            and init_type == "worker"
+            and url
+            and not _should_skip_url(url)
+        ):
+            try:
+                worker_url = init_url or (
+                    next(iter(self._dedicated_workers), None)
+                    if self._dedicated_workers
+                    else None
+                )
+                if worker_url:
+                    self._ensure_worker_request_recorded(
+                        url, worker_url, request.get("method") or "GET"
+                    )
+                else:
+                    self._pending_cdp_worker.append(
+                        (url, request.get("method") or "GET")
+                    )
+            except Exception:
+                logger.debug(
+                    "BROWSER %i: CDP worker request attribution failed",
+                    self.browser_id,
+                    exc_info=True,
+                )
         redirect = params.get("redirectResponse")
         if redirect and self.browser_params.dns_instrument:
             # Chrome keeps requestId stable across hops; record the
@@ -515,6 +617,7 @@ class MeasurementController:
         url = self._cdp_id_to_url.get(rid) or ""
         if not url:
             return
+        self._cdp_cache_urls.add(url)
         rec = self._cdp_by_url.setdefault(url, {})
         rec["fromDiskCache"] = True
         rec["fromCache"] = True
@@ -542,6 +645,8 @@ class MeasurementController:
         }
         if rid and url:
             self._cdp_id_to_url[str(rid)] = url
+        if from_cache and url:
+            self._cdp_cache_urls.add(url)
         if self.browser_params.dns_instrument and url:
             self._record_dns(
                 url=url,
@@ -606,11 +711,74 @@ class MeasurementController:
             url = ""
         if url:
             self._dedicated_workers.add(url)
+            pending = self._pending_cdp_worker
+            self._pending_cdp_worker = []
+            for req_url, method in pending:
+                self._ensure_worker_request_recorded(req_url, url, method)
+        try:
+            worker.on("request", self._on_request)
+            worker.on("response", self._on_response)
+        except Exception:
+            pass
+
+    def _flush_pending_cdp_worker_requests(self) -> None:
+        worker_url = next(iter(self._dedicated_workers), None)
+        if not worker_url:
+            return
+        pending = self._pending_cdp_worker
+        self._pending_cdp_worker = []
+        for req_url, method in pending:
+            self._ensure_worker_request_recorded(req_url, worker_url, method)
+
+    def _ensure_worker_request_recorded(
+        self, url: str, worker_url: str, method: str = "GET"
+    ) -> None:
+        key = (url.split("?")[0], worker_url)
+        if key in self._recorded_worker_request_keys:
+            return
+        if _should_skip_url(url) or url.startswith("about:"):
+            return
+        self._recorded_worker_request_keys.add(key)
+        triggering = _origin(worker_url)
+        request_id = self._rid(f"cdp-worker:{url}:{worker_url}")
+        self._save(
+            "http_requests",
+            {
+                "incognito": 0,
+                "extension_session_uuid": self.session_uuid,
+                "event_ordinal": self._next_ordinal(),
+                "window_id": 1,
+                "tab_id": 1,
+                "frame_id": 0,
+                "url": url,
+                "top_level_url": worker_url,
+                "parent_frame_id": -1,
+                "frame_ancestors": "[]",
+                "method": method,
+                "referrer": "",
+                "headers": "[]",
+                "request_id": request_id,
+                "is_XHR": 1,
+                "is_third_party_channel": _third_party(url, worker_url),
+                "is_third_party_to_top_window": _third_party(url, worker_url),
+                "triggering_origin": triggering,
+                "loading_origin": triggering,
+                "loading_href": worker_url,
+                "req_call_stack": None,
+                "resource_type": "xmlhttprequest",
+                "post_body": None,
+                "post_body_raw": None,
+                "time_stamp": _utc_now(),
+            },
+        )
 
     def _worker_url(self, request: Request) -> Optional[str]:
+        resource = (getattr(request, "resource_type", None) or "").lower()
         try:
             worker = getattr(request, "service_worker", None)
-            if worker is not None:
+            # The SW *script* load exposes service_worker but is a page
+            # request; only attribute non-document fetches to the worker.
+            if worker is not None and resource not in ("script", "document"):
                 return worker.url
         except Exception:
             pass
@@ -620,20 +788,42 @@ class MeasurementController:
         except Exception:
             frame_missing = True
         init_url = self._cdp_initiators.get(request.url) or ""
-        # The page also loads worker.js as a classic <script src>. Treat
-        # initiator worker.js as a worker only when Playwright has no frame
-        # (dedicated/service-worker fetch).
+        init_type = (self._cdp_initiator_types.get(request.url) or "").lower()
+        # Dedicated-worker fetch: CDP initiator.type is "worker" even when
+        # Playwright still exposes the page frame (the page also
+        # <script src>s worker.js).
+        if init_type == "worker":
+            if init_url:
+                return init_url
+            if self._dedicated_workers:
+                return next(iter(self._dedicated_workers))
         if frame_missing and (
             "worker.js" in init_url or "service_worker.js" in init_url
         ):
             return init_url
         if frame_missing and self._dedicated_workers:
-            resource = (getattr(request, "resource_type", None) or "").lower()
             if resource != "document":
                 if init_url and init_url in self._dedicated_workers:
                     return init_url
                 return next(iter(self._dedicated_workers))
         return None
+
+    def _pump_playwright(self, timeout_ms: int = 200) -> None:
+        """Process queued CDP events. time.sleep() blocks the sync dispatcher."""
+        page = None
+        try:
+            page = self.session.page
+        except Exception:
+            page = None
+        if page is None:
+            return
+        try:
+            page.wait_for_timeout(timeout_ms)
+        except Exception:
+            try:
+                page.evaluate("() => undefined")
+            except Exception:
+                pass
 
     def _record_request(self, request: Request) -> None:
         url = request.url
@@ -667,16 +857,7 @@ class MeasurementController:
         except Exception:
             page_url = ""
         resource = (request.resource_type or "").lower()
-        mapped = RESOURCE_TYPE_MAP.get(resource, "other")
-        if resource == "document":
-            try:
-                mapped = (
-                    "main_frame"
-                    if (frame is None or frame.parent_frame is None)
-                    else "sub_frame"
-                )
-            except Exception:
-                mapped = "main_frame"
+        mapped = _request_resource_type(request, frame)
         is_xhr = 1 if resource in ("xhr", "fetch") else 0
         frame_url = ""
         try:
@@ -687,6 +868,7 @@ class MeasurementController:
         if worker_url and mapped not in ("script", "main_frame", "sub_frame"):
             is_xhr = 1
             mapped = "xmlhttprequest"
+            self._recorded_worker_request_keys.add((url.split("?")[0], worker_url))
         main_frame = mapped == "main_frame"
         if main_frame:
             top_url = url
@@ -828,31 +1010,28 @@ class MeasurementController:
         _playwright_call_timeout(response.finished)
         extra = self._cdp_by_url.get(url, {})
         cdp_rid = extra.get("requestId")
-        # finished() is skipped (no timeout=). requestServedFromCache can
-        # land a beat later; poll briefly so visit-2 cache hits are marked.
-        if (
-            cdp_rid
-            and cdp_rid not in self._cdp_cache_ids
-            and not extra.get("fromCache")
-        ):
-            deadline = time.time() + 0.25
-            while time.time() < deadline:
-                extra = self._cdp_by_url.get(url, extra)
-                if extra.get("fromCache") or extra.get("fromDiskCache"):
-                    break
-                if cdp_rid in self._cdp_cache_ids:
-                    break
-                time.sleep(0.01)
-        from_cache = (
-            1
-            if (
-                extra.get("fromDiskCache")
-                or extra.get("fromPrefetchCache")
-                or extra.get("fromCache")
-                or (cdp_rid and cdp_rid in self._cdp_cache_ids)
-            )
-            else 0
+        already_cached = bool(
+            extra.get("fromCache")
+            or extra.get("fromDiskCache")
+            or extra.get("fromPrefetchCache")
+            or (cdp_rid and cdp_rid in self._cdp_cache_ids)
+            or url in self._cdp_cache_urls
         )
+        # finished() / time.sleep() do not process CDP. Pump only on a
+        # repeat URL so requestServedFromCache can mark visit-2 hits.
+        if url in self._seen_response_urls and not already_cached:
+            self._pump_playwright(200)
+            extra = self._cdp_by_url.get(url, extra)
+            cdp_rid = extra.get("requestId") or cdp_rid
+            already_cached = bool(
+                extra.get("fromCache")
+                or extra.get("fromDiskCache")
+                or extra.get("fromPrefetchCache")
+                or (cdp_rid and cdp_rid in self._cdp_cache_ids)
+                or url in self._cdp_cache_urls
+            )
+        from_cache = 1 if already_cached else 0
+        self._seen_response_urls.add(url)
         header_pairs = _header_pairs_from_playwright(response)
         headers = {k.lower(): v for k, v in header_pairs}
         location = headers.get("location") or ""
@@ -949,14 +1128,13 @@ class MeasurementController:
 
     def _maybe_save_body(self, response: Response, request_id: int) -> Optional[str]:
         option = self.browser_params.save_content
-        resource = RESOURCE_TYPE_MAP.get(response.request.resource_type, "other")
-        if response.request.resource_type == "document":
-            frame = self._safe_frame(response.request)
-            resource = (
-                "main_frame"
-                if (frame is None or frame.parent_frame is None)
-                else "sub_frame"
-            )
+        frame = self._safe_frame(response.request)
+        resource = _request_resource_type(response.request, frame)
+        # Finish every response when content capture is on so sibling
+        # script/iframe bodies are still readable (Playwright evicts
+        # unfinished bodies). CONNECTION_ABORT tests keep save_content off.
+        if option:
+            _playwright_call_timeout(response.finished, allow_unbounded=True)
         if option is True:
             pass
         elif isinstance(option, str):
@@ -965,12 +1143,18 @@ class MeasurementController:
                 return None
         else:
             return None
-        _playwright_call_timeout(response.finished, allow_unbounded=True)
         body: Optional[bytes] = None
         raw = _playwright_call_timeout(response.body, allow_unbounded=True)
         if raw is not None:
             body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
-        if body is None:
+        if not body:
+            body = self._cdp_response_body(response.url)
+        if not body:
+            self._pump_playwright(200)
+            raw = _playwright_call_timeout(response.body, allow_unbounded=True)
+            if raw is not None:
+                body = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+        if not body:
             body = self._cdp_response_body(response.url)
         if not body:
             return None

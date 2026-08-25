@@ -136,8 +136,14 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
   ) {
     // Handle permissions errors
     try {
+      if (object === undefined) {
+        return "undefined";
+      }
       if (object === null) {
         return "null";
+      }
+      if (typeof object === "boolean") {
+        return object ? "true" : "false";
       }
       if (typeof object === "function") {
         return stringifyFunctions ? object.toString() : "FUNCTION";
@@ -192,6 +198,17 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     return false;
   }
 
+  function getTopLevelUrl() {
+    try {
+      if (window.top && window.top.location) {
+        return window.top.location.href;
+      }
+    } catch (error) {
+      /* cross-origin window.top */
+    }
+    return window.location.href;
+  }
+
   // For gets, sets, etc. on a single value
   function logValue(
     instrumentedVariableName,
@@ -219,6 +236,7 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
       symbol: instrumentedVariableName,
       value: serializeObject(value, logSettings.logFunctionsAsStrings),
       documentUrl: window.location.href,
+      topLevelUrl: getTopLevelUrl(),
       scriptUrl: callContext.scriptUrl,
       scriptLine: callContext.scriptLine,
       scriptCol: callContext.scriptCol,
@@ -273,6 +291,7 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
         args: serialArgs,
         value: "",
         documentUrl: window.location.href,
+        topLevelUrl: getTopLevelUrl(),
         scriptUrl: callContext.scriptUrl,
         scriptLine: callContext.scriptLine,
         scriptCol: callContext.scriptCol,

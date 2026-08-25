@@ -51,5 +51,11 @@ class OpenWPMJSTest(OpenWPMTest):
                 observed_gets_and_sets.add((symbol, row["operation"], row["value"]))
             else:
                 observed_calls.add((symbol, row["operation"], row["arguments"]))
-        assert observed_calls == expected_method_calls
-        assert observed_gets_and_sets == expected_gets_and_sets
+        assert observed_calls == expected_method_calls, (
+            f"extra={observed_calls - expected_method_calls} "
+            f"missing={expected_method_calls - observed_calls}"
+        )
+        assert observed_gets_and_sets == expected_gets_and_sets, (
+            f"extra={observed_gets_and_sets - expected_gets_and_sets} "
+            f"missing={expected_gets_and_sets - observed_gets_and_sets}"
+        )
