@@ -6,6 +6,7 @@ from sqlite3 import Row
 from typing import List, Optional, Tuple
 
 import pytest
+
 from openwpm.browser import BrowserSession, By
 from openwpm.command_sequence import CommandSequence
 from openwpm.commands.browser_commands import GetCommand

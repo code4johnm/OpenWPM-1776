@@ -4,7 +4,6 @@ import subprocess
 from collections import OrderedDict
 from copy import deepcopy
 
-
 from tabulate import tabulate
 
 from openwpm.config import ConfigEncoder

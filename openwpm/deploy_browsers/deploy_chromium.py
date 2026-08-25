@@ -11,10 +11,9 @@ from typing import Any, Dict, Optional, Tuple
 
 from easyprocess import EasyProcessError
 from multiprocess import Queue
-
 from pyvirtualdisplay import Display
 
-from ..browser import BrowserSession, DEFAULT_VIEWPORT
+from ..browser import DEFAULT_VIEWPORT, BrowserSession
 from ..browser_bin import chromium_executable, ensure_browsers_path
 from ..commands.profile_commands import load_profile
 from ..config import BrowserParamsInternal, ConfigEncoder, ManagerParamsInternal
