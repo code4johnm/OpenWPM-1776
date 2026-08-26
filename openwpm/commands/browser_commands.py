@@ -168,24 +168,49 @@ class BrowseCommand(BaseCommand):
             if not candidates:
                 break
             href = candidates[int(random.random() * len(candidates))]
-            seen_hrefs.add(href)
             logger.info(
                 "BROWSER %i: visiting internal link %s"
                 % (browser_params.browser_id, href)
             )
 
+            landed_ok = False
+            for attempt in range(2):
+                # Resume paused CDP targets before goto. A timed-out
+                # Playwright navigation otherwise holds the page and
+                # simple_c never hits the test server under xvfb.
+                _persist_http_responses(extension_socket, snapshot_history=False)
+                try:
+                    # goto() rather than ElementHandle.click(): click() waits
+                    # up to 30s for actionability and is what timed out browse
+                    # under xvfb. Bound goto so one hung nav cannot consume
+                    # the 60s command timeout before simple_c is visited.
+                    webdriver.get(href, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                    landed = urlparse(getattr(webdriver, "current_url", "") or "")
+                    wanted = urlparse(href)
+                    if landed.path.rstrip("/") != wanted.path.rstrip("/"):
+                        stop = getattr(webdriver, "stop_pending_navigation", None)
+                        if callable(stop):
+                            stop()
+                        webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                        continue
+                    landed_ok = True
+                    break
+                except Exception as e:
+                    logger.error(
+                        "BROWSER %i: Error visiting internal link %s",
+                        browser_params.browser_id,
+                        href,
+                        exc_info=e,
+                    )
+                    try:
+                        webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                    except Exception:
+                        landed_ok = False
+                        break
+            seen_hrefs.add(href)
+            if not landed_ok:
+                continue
             try:
-                # goto() rather than ElementHandle.click(): click() waits up
-                # to 30s for actionability and is what timed out browse
-                # under xvfb. The HTTP tables need the navigation, not the
-                # pointer event. Bound goto so one hung xvfb nav cannot
-                # consume the 60s command timeout before simple_c is visited.
-                webdriver.get(href, timeout=_BROWSE_NAV_TIMEOUT_MS)
-                landed = urlparse(getattr(webdriver, "current_url", "") or "")
-                wanted = urlparse(href)
-                if landed.path.rstrip("/") != wanted.path.rstrip("/"):
-                    webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
-                    continue
                 time.sleep(max(1, self.sleep))
                 _persist_http_responses(extension_socket, snapshot_history=False)
                 if browser_params.bot_mitigation:
@@ -193,15 +218,12 @@ class BrowseCommand(BaseCommand):
                 webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
             except Exception as e:
                 logger.error(
-                    "BROWSER %i: Error visiting internal link %s",
+                    "BROWSER %i: Error finishing internal link %s",
                     browser_params.browser_id,
                     href,
                     exc_info=e,
                 )
-                try:
-                    webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
-                except Exception:
-                    break
+                break
 
         _persist_http_responses(extension_socket)
 

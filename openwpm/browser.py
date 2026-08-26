@@ -180,9 +180,19 @@ class BrowserSession:
             except PWTimeout:
                 pass
         except PWTimeout:
-            pass
+            # Playwright leaves the navigation running after timeout.
+            # A stuck intra-link goto then blocks the next get() so
+            # browse never records simple_c/simple_d under xvfb.
+            self.stop_pending_navigation()
         except Error as exc:
             raise _as_browser_error(exc) from exc
+
+    def stop_pending_navigation(self) -> None:
+        """Abort an in-flight page.goto so the next navigation can start."""
+        try:
+            self.page.evaluate("() => window.stop()")
+        except Exception:
+            pass
 
     def goto(self, url: str, **kwargs: Any) -> Any:
         Error, _ = _playwright_errors()
@@ -248,8 +258,9 @@ class BrowserSession:
         if url in ("about:blank", "about:blank/", "chrome://newtab/", ""):
             return
         Error, _ = _playwright_errors()
+        self.stop_pending_navigation()
         try:
-            self.page.goto("about:blank", wait_until="commit", timeout=10000)
+            self.page.goto("about:blank", wait_until="commit", timeout=3000)
         except Error:
             pass
 
