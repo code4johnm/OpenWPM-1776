@@ -47,17 +47,6 @@ HTTP_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         "main_frame",
     ),
     (
-        f"{utilities.BASE_TEST_URL}/shared/test_favicon.ico",
-        f"{utilities.BASE_TEST_URL}/http_test_page.html",
-        f"{utilities.BASE_TEST_URL_NOPATH}",
-        f"{utilities.BASE_TEST_URL_NOPATH}",
-        f"{utilities.BASE_TEST_URL}/http_test_page.html",
-        0,
-        None,
-        None,
-        "image",
-    ),
-    (
         f"{utilities.BASE_TEST_URL}/shared/test_image_2.png",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
         f"{utilities.BASE_TEST_URL_NOPATH}",
@@ -96,6 +85,17 @@ HTTP_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL_NOPATH}",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        0,
+        None,
+        None,
+        "image",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL}/shared/test_image.png",
+        f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL}/http_test_page_2.html",
         0,
         None,
         None,
@@ -211,11 +211,6 @@ HTTP_RESPONSES: set[tuple[str, str]] = {
         "",
     ),
     (
-        f"{utilities.BASE_TEST_URL}/shared/test_favicon.ico",
-        # u'',
-        "",
-    ),
-    (
         f"{utilities.BASE_TEST_URL}/shared/test_style.css",
         # u'http://localhost:8000/test_pages/http_test_page.html',
         "",
@@ -254,6 +249,27 @@ HTTP_RESPONSES: set[tuple[str, str]] = {
         f"{utilities.BASE_TEST_URL}/shared/test_image_2.png",
         # u'http://localhost:8000/test_pages/http_test_page.html',
         "",
+    ),
+    # Playwright records the 3xx hop as an http_responses row with Location.
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req1.png",
+        "req2.png?dst=req3.png&dst=/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req2.png",
+        "req3.png?dst=/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req3.png",
+        "/test_pages/shared/test_image_2.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame1.png",
+        "frame2.png?dst=/404.png",
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame2.png",
+        "/404.png",
     ),
 }
 
@@ -434,6 +450,17 @@ HTTP_CACHED_REQUESTS: set[tuple[Union[str, None, int], ...]] = {
         "image",
     ),
     (
+        f"{utilities.BASE_TEST_URL}/shared/test_image.png",
+        f"{utilities.BASE_TEST_URL}/http_test_page.html",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL_NOPATH}",
+        f"{utilities.BASE_TEST_URL}/http_test_page_2.html",
+        0,
+        None,
+        None,
+        "image",
+    ),
+    (
         f"{utilities.BASE_TEST_URL}/shared/test_image_2.png",
         f"{utilities.BASE_TEST_URL}/http_test_page.html",
         f"{utilities.BASE_TEST_URL_NOPATH}",
@@ -477,6 +504,27 @@ HTTP_CACHED_RESPONSES: set[tuple[str, int]] = {
     (f"{utilities.BASE_TEST_URL}/shared/test_image_2.png", 1),
     (f"{utilities.BASE_TEST_URL}/shared/test_style.css", 1),
     (f"{utilities.BASE_TEST_URL}/shared/test_image.png", 1),
+    # 3xx hops are stored as responses; Chromium may not mark them cached.
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req1.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req2.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/req3.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame1.png",
+        0,
+    ),
+    (
+        f"{utilities.BASE_TEST_URL_NOPATH}/MAGIC_REDIRECT/frame2.png",
+        0,
+    ),
 }
 
 # format: (source_url, destination_url)
@@ -641,6 +689,8 @@ class TestHTTPInstrument(OpenWPMTest):
         rows = db_utils.query_db(db, "SELECT * FROM http_requests")
         observed_records = set()
         for row in rows:
+            if row["url"].split("?")[0].endswith("favicon.ico"):
+                continue
             observed_records.add(
                 (
                     row["url"].split("?")[0],
@@ -656,7 +706,12 @@ class TestHTTPInstrument(OpenWPMTest):
             )
             request_id_to_url[row["request_id"]] = row["url"]
 
-        assert HTTP_WORKER_SCRIPT_REQUESTS == observed_records
+        expected = {
+            rec
+            for rec in HTTP_WORKER_SCRIPT_REQUESTS
+            if not str(rec[0]).endswith("favicon.ico")
+        }
+        assert expected == observed_records
 
     def test_service_worker_requests(self):
         """Check correct URL attribution for requests made by service worker"""
@@ -674,6 +729,8 @@ class TestHTTPInstrument(OpenWPMTest):
         rows = db_utils.query_db(db, "SELECT * FROM http_requests")
         observed_records = set()
         for row in rows:
+            if row["url"].split("?")[0].endswith("favicon.ico"):
+                continue
             observed_records.add(
                 (
                     row["url"].split("?")[0],
@@ -689,7 +746,12 @@ class TestHTTPInstrument(OpenWPMTest):
             )
             request_id_to_url[row["request_id"]] = row["url"]
 
-        assert HTTP_SERVICE_WORKER_REQUESTS == observed_records
+        expected = {
+            rec
+            for rec in HTTP_SERVICE_WORKER_REQUESTS
+            if not str(rec[0]).endswith("favicon.ico")
+        }
+        assert expected == observed_records
 
 
 class TestPOSTInstrument(OpenWPMTest):
@@ -881,6 +943,8 @@ def test_page_visit(
     observed_requests = set()
     for row in rows:
         assert isinstance(row, Row)
+        if row["url"].split("?")[0].endswith("favicon.ico"):
+            continue
         observed_requests.add(
             (
                 row["url"].split("?")[0],
@@ -903,6 +967,8 @@ def test_page_visit(
     observed_responses: Set[Tuple[str, str]] = set()
     for row in rows:
         assert isinstance(row, Row)
+        if row["url"].split("?")[0].endswith("favicon.ico"):
+            continue
         observed_responses.add(
             (
                 row["url"].split("?")[0],

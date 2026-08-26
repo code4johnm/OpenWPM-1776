@@ -11,7 +11,27 @@ jobs:
   build_and_publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Check Docker Hub credentials
+        id: dockerhub
+        env:
+          DOCKERHUB_USER_NAME: ${{ secrets.DOCKERHUB_USER_NAME }}
+          DOCKERHUB_USER_PASSWORD: ${{ secrets.DOCKERHUB_USER_PASSWORD }}
+        run: |
+          if [ -n "$DOCKERHUB_USER_NAME" ] && [ -n "$DOCKERHUB_USER_PASSWORD" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Container publish skipped"
+              echo
+              echo "Docker Hub credentials are not configured. Set \`DOCKERHUB_USER_NAME\`"
+              echo "and \`DOCKERHUB_USER_PASSWORD\` to publish images."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Docker Hub credentials are not configured; skipping publish."
+          fi
+
       - name: Prepare
+        if: steps.dockerhub.outputs.configured == 'true'
         id: prep
         run: |
           DOCKER_IMAGE=openwpm/openwpm
@@ -28,11 +48,14 @@ jobs:
           echo tags="${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
+        if: steps.dockerhub.outputs.configured == 'true'
         uses: actions/checkout@v4
       - name: Set up Docker Buildx
+        if: steps.dockerhub.outputs.configured == 'true'
         id: buildx
         uses: docker/setup-buildx-action@v3
       - name: Cache Docker layers
+        if: steps.dockerhub.outputs.configured == 'true'
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
@@ -40,11 +63,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
       - name: Log into Dockerhub
+        if: steps.dockerhub.outputs.configured == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USER_NAME }}
           password: ${{ secrets.DOCKERHUB_USER_PASSWORD }}
       - name: Build and push
+        if: steps.dockerhub.outputs.configured == 'true'
         id: docker_build
         uses: docker/build-push-action@v6
         with:
@@ -56,4 +81,5 @@ jobs:
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache
       - name: Image digest
+        if: steps.dockerhub.outputs.configured == 'true'
         run: echo ${{ steps.docker_build.outputs.digest }}

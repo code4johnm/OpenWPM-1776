@@ -136,8 +136,14 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
   ) {
     // Handle permissions errors
     try {
+      if (object === undefined) {
+        return "undefined";
+      }
       if (object === null) {
         return "null";
+      }
+      if (typeof object === "boolean") {
+        return object ? "true" : "false";
       }
       if (typeof object === "function") {
         return stringifyFunctions ? object.toString() : "FUNCTION";
@@ -192,6 +198,17 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     return false;
   }
 
+  function getTopLevelUrl() {
+    try {
+      if (window.top && window.top.location) {
+        return window.top.location.href;
+      }
+    } catch (error) {
+      /* cross-origin window.top */
+    }
+    return window.location.href;
+  }
+
   // For gets, sets, etc. on a single value
   function logValue(
     instrumentedVariableName,
@@ -218,6 +235,8 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
       operation,
       symbol: instrumentedVariableName,
       value: serializeObject(value, logSettings.logFunctionsAsStrings),
+      documentUrl: window.location.href,
+      topLevelUrl: getTopLevelUrl(),
       scriptUrl: callContext.scriptUrl,
       scriptLine: callContext.scriptLine,
       scriptCol: callContext.scriptCol,
@@ -271,6 +290,8 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
         symbol: instrumentedFunctionName,
         args: serialArgs,
         value: "",
+        documentUrl: window.location.href,
+        topLevelUrl: getTopLevelUrl(),
         scriptUrl: callContext.scriptUrl,
         scriptLine: callContext.scriptLine,
         scriptCol: callContext.scriptCol,
@@ -337,79 +358,65 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
             scriptUrl: items[0],
             scriptLine: items[items.length - 2],
             scriptCol: items[items.length - 1],
+            scriptLocEval: "",
           };
         }
       }
       return null;
     }
     const body = trimmed.slice(3);
-    let m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
-    if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: m[3], scriptCol: m[4] };
-    }
-    m = body.match(/^(.*?)\s+\((.+)\)$/);
-    if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: "", scriptCol: "" };
-    }
-    m = body.match(/^(.*):(\d+):(\d+)$/);
-    if (m) {
-      return { funcName: "", scriptUrl: m[1], scriptLine: m[2], scriptCol: m[3] };
-    }
-    return { funcName: "", scriptUrl: body, scriptLine: "", scriptCol: "" };
-  }
-
-  function isInstrumentationFrame(frame) {
-    const blob = (frame.funcName + " " + frame.scriptUrl).toLowerCase();
-    return (
-      blob.includes("getstacktrace") ||
-      blob.includes("getoriginatingscriptcontext") ||
-      blob.includes("parsev8frame") ||
-      blob.includes("instrumentfunction") ||
-      blob.includes("instrumentobject") ||
-      blob.includes("logvalue") ||
-      blob.includes("logcall") ||
-      blob.includes("__playwright") ||
-      blob.includes("__pw_") ||
-      frame.scriptUrl === "<anonymous>" ||
-      frame.scriptUrl.indexOf("pptr:") === 0
+    // V8 eval / Function: eval (eval at NAME (FILE:LINE:COL), <anonymous>:L:C)
+    let m = body.match(
+      /^eval\s+\(eval at ([^(]*)\((.+?):(\d+):(\d+)\),\s*<anonymous>(?::(\d+):(\d+))?\)$/,
     );
-  }
-
-
-  function parseV8Frame(line) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("at ")) {
-      // Firefox-style: FUNC@FILE:LINE:COL
-      if (trimmed.includes("@")) {
-        const at = trimmed.indexOf("@");
-        const funcName = trimmed.slice(0, at);
-        const rest = trimmed.slice(at + 1);
-        const items = rsplit(rest, ":", 2);
-        if (items.length >= 3) {
-          return {
-            funcName,
-            scriptUrl: items[0],
-            scriptLine: items[items.length - 2],
-            scriptCol: items[items.length - 1],
-          };
-        }
-      }
-      return null;
-    }
-    const body = trimmed.slice(3);
-    let m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
     if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: m[3], scriptCol: m[4] };
+      const site = m[1].trim();
+      const kind = m[5] && m[5] !== "1" ? "Function" : "eval";
+      return {
+        funcName: kind === "Function" ? "anonymous" : "",
+        scriptUrl: m[2],
+        scriptLine: m[5] || "1",
+        scriptCol: m[6] || "1",
+        scriptLocEval: "line " + m[3] + " > " + kind,
+      };
+    }
+    m = body.match(/^(.*?)\s+\((.+):(\d+):(\d+)\)$/);
+    if (m) {
+      return {
+        funcName: m[1],
+        scriptUrl: m[2],
+        scriptLine: m[3],
+        scriptCol: m[4],
+        scriptLocEval: "",
+      };
     }
     m = body.match(/^(.*?)\s+\((.+)\)$/);
     if (m) {
-      return { funcName: m[1], scriptUrl: m[2], scriptLine: "", scriptCol: "" };
+      return {
+        funcName: m[1],
+        scriptUrl: m[2],
+        scriptLine: "",
+        scriptCol: "",
+        scriptLocEval: "",
+      };
     }
     m = body.match(/^(.*):(\d+):(\d+)$/);
     if (m) {
-      return { funcName: "", scriptUrl: m[1], scriptLine: m[2], scriptCol: m[3] };
+      return {
+        funcName: "",
+        scriptUrl: m[1],
+        scriptLine: m[2],
+        scriptCol: m[3],
+        scriptLocEval: "",
+      };
     }
-    return { funcName: "", scriptUrl: body, scriptLine: "", scriptCol: "" };
+    return {
+      funcName: "",
+      scriptUrl: body,
+      scriptLine: "",
+      scriptCol: "",
+      scriptLocEval: "",
+    };
   }
 
   function isInstrumentationFrame(frame) {
@@ -461,16 +468,19 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
       return empty_context;
     }
     let scriptUrl = caller.scriptUrl || "";
-    let scriptLocEval = "";
+    let scriptLocEval = caller.scriptLocEval || "";
     const lineNoIdx = scriptUrl.indexOf(" line ");
     if (lineNoIdx !== -1) {
       scriptLocEval = scriptUrl.slice(lineNoIdx + 1);
       scriptUrl = scriptUrl.slice(0, lineNoIdx);
-    } else {
-      // V8 eval frames: eval at NAME (file:line:col)
-      const evalMatch = scriptUrl.match(/eval at .* \((.+):(\d+):(\d+)\)$/);
+    } else if (!scriptLocEval) {
+      // V8 leftover: eval at NAME (file:line:col), <anonymous>
+      const evalMatch = scriptUrl.match(
+        /eval at .* \((.+):(\d+):(\d+)\)(?:, <anonymous>)?$/,
+      );
       if (evalMatch) {
-        scriptLocEval = "eval";
+        scriptUrl = evalMatch[1];
+        scriptLocEval = "line " + evalMatch[2] + " > eval";
       }
     }
     const callStack = getCallStack
@@ -820,18 +830,25 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
 
   const sendFactory = function (eventId, $sendMessagesToLogger) {
     let messages = [];
-    // debounce sending queued messages
-    const send = debounce(function () {
+    const flush = function () {
+      if (!messages.length) {
+        return;
+      }
       $sendMessagesToLogger(eventId, messages);
-
-      // clear the queue
       messages = [];
-    }, 100);
+    };
+    // debounce sending queued messages; tests flush immediately
+    const send = debounce(flush, 100);
+    window.__openwpm_js_flush_queue__ = flush;
 
     return function (msgType, msg) {
       // queue the message
       messages.push({ type: msgType, content: msg });
-      send();
+      if (window.__OPENWPM_JS_TESTING__) {
+        flush();
+      } else {
+        send();
+      }
     };
   };
 
@@ -846,7 +863,13 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     JSInstrumentRequests.forEach(function (item) {
       let targetObject;
       try {
-        targetObject = eval(item.object);
+        // Python-side settings pass a string path (`window.navigator`).
+        // Test pages pass the live object to window.instrumentJS().
+        if (typeof item.object === "string") {
+          targetObject = eval(item.object);
+        } else {
+          targetObject = item.object;
+        }
       } catch (e) {
         console.warn(
           `OpenWPM: eval failed for instrument target: ${item.object}`,
@@ -878,12 +901,9 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
 
 
 (function bootstrapOpenWPMJSInstrument() {
-  const settings = window.__OPENWPM_JS_SETTINGS__;
-  if (!settings || !settings.length) {
-    return;
-  }
+  const settings = window.__OPENWPM_JS_SETTINGS__ || [];
+  const testing = !!window.__OPENWPM_JS_TESTING__;
   const pending = [];
-  let flushTimer = null;
   function sendMessagesToLogger(_eventId, messages) {
     try {
       if (typeof window.__openwpm_js_log__ === "function") {
@@ -896,13 +916,27 @@ function getInstrumentJS(eventId, sendMessagesToLogger) {
     }
   }
   window.__openwpm_js_flush__ = function () {
+    if (typeof window.__openwpm_js_flush_queue__ === "function") {
+      try {
+        window.__openwpm_js_flush_queue__();
+      } catch (e) {
+        /* ignore */
+      }
+    }
     if (pending.length && typeof window.__openwpm_js_log__ === "function") {
       pending.splice(0).forEach((m) => window.__openwpm_js_log__(m));
     }
   };
+  try {
+    window.addEventListener("pagehide", window.__openwpm_js_flush__);
+  } catch (e) {
+    /* ignore */
+  }
   const instrumentJS = getInstrumentJS("openwpm", sendMessagesToLogger);
-  instrumentJS(settings);
-  if (window.__OPENWPM_JS_TESTING__) {
+  if (settings.length) {
+    instrumentJS(settings);
+  }
+  if (testing) {
     window.instrumentJS = instrumentJS;
   }
 })();

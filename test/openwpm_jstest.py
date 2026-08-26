@@ -30,15 +30,32 @@ class OpenWPMJSTest(OpenWPMTest):
         rows = db_utils.get_javascript_entries(db, all_columns=True)
         observed_gets_and_sets = set()
         observed_calls = set()
+        expected_symbols = {s for s, _, _ in expected_method_calls} | {
+            s for s, _, _ in expected_gets_and_sets
+        }
         for row in rows:
             if not row["symbol"].startswith(symbol_prefix):
                 continue
+            # Empty-prefix tests also see fingerprinting rows from later
+            # navigations (Chromium has no Firefox localDomains pref, so
+            # fetch("https://example.com") is a real document).
+            if row["document_url"] != doc_url or row["top_level_url"] != top_url:
+                continue
             symbol = re.sub(symbol_prefix, "", row["symbol"])
-            assert row["document_url"] == doc_url
-            assert row["top_level_url"] == top_url
+            # collection_fingerprinting is on by default and emits extra
+            # same-document symbols (canvas, navigator, ...). Compare only
+            # the symbols the page under test is exercising.
+            if expected_symbols and symbol not in expected_symbols:
+                continue
             if row["operation"] == "get" or row["operation"] == "set":
                 observed_gets_and_sets.add((symbol, row["operation"], row["value"]))
             else:
                 observed_calls.add((symbol, row["operation"], row["arguments"]))
-        assert observed_calls == expected_method_calls
-        assert observed_gets_and_sets == expected_gets_and_sets
+        assert observed_calls == expected_method_calls, (
+            f"extra={observed_calls - expected_method_calls} "
+            f"missing={expected_method_calls - observed_calls}"
+        )
+        assert observed_gets_and_sets == expected_gets_and_sets, (
+            f"extra={observed_gets_and_sets - expected_gets_and_sets} "
+            f"missing={expected_gets_and_sets - observed_gets_and_sets}"
+        )

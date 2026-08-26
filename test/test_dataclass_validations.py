@@ -65,6 +65,19 @@ def test_save_content_type():
     validate_browser_params(browser_params)
 
 
+def test_record_crawl_outcome_rejects_true():
+    browser_params = BrowserParams()
+    browser_params.record_crawl_outcome = True
+    with pytest.raises(ConfigError):
+        validate_browser_params(browser_params)
+
+    browser_params.record_crawl_outcome = "status_codes_only"
+    validate_browser_params(browser_params)
+
+    browser_params.record_crawl_outcome = False
+    validate_browser_params(browser_params)
+
+
 def test_log_file_extension():
     manager_params = ManagerParams()
 

@@ -1,13 +1,17 @@
 import logging
 import tarfile
 from pathlib import Path
+from typing import Any, Optional
 
 from openwpm.config import BrowserParamsInternal, ManagerParamsInternal
 
 from ..browser import BrowserSession
 from ..errors import ProfileLoadError
 from .types import BaseCommand
-from .utils.firefox_profile import sleep_until_sqlite_checkpoint
+from .utils.firefox_profile import (
+    materialize_chromium_history,
+    sleep_until_sqlite_checkpoint,
+)
 
 logger = logging.getLogger("openwpm")
 
@@ -16,6 +20,26 @@ REQUIRED_PROFILE_ITEMS = [
     "Default/Preferences",
     "Local State",
 ]
+
+# Live (or leftover) Chromium lock/socket files. tarfile treats a unix
+# socket as a regular file and read() blocks until GitHub cancels the job.
+_SKIP_CHROMIUM_LOCK_FILES = frozenset(
+    {
+        "SingletonLock",
+        "SingletonSocket",
+        "SingletonCookie",
+        "DevToolsActivePort",
+    }
+)
+
+
+def _profile_tar_filter(tarinfo: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+    """Keep regular files and directories; drop locks, sockets, and devices."""
+    if Path(tarinfo.name).name in _SKIP_CHROMIUM_LOCK_FILES:
+        return None
+    if tarinfo.isfile() or tarinfo.isdir():
+        return tarinfo
+    return None
 
 
 def dump_profile(
@@ -41,7 +65,10 @@ def dump_profile(
         % (browser_params.browser_id, browser_profile_path, tar_path)
     )
 
-    tar.add(browser_profile_path, arcname="")
+    # Chromium History/Cookies live in SQLite WAL until checkpoint.
+    sleep_until_sqlite_checkpoint(browser_profile_path)
+    materialize_chromium_history(browser_profile_path)
+    tar.add(browser_profile_path, arcname="", filter=_profile_tar_filter)
     archived_items = tar.getnames()
     tar.close()
 
@@ -74,11 +101,13 @@ class DumpProfileCommand(BaseCommand):
         webdriver: BrowserSession,
         browser_params: BrowserParamsInternal,
         manager_params: ManagerParamsInternal,
-        extension_socket,
+        extension_socket: Any,
     ) -> None:
         if self.close_webdriver:
             webdriver.close_context()
-            sleep_until_sqlite_checkpoint(browser_params.profile_path)
+            profile_path = browser_params.profile_path
+            if profile_path is not None:
+                sleep_until_sqlite_checkpoint(profile_path)
 
         assert browser_params.profile_path is not None
         dump_profile(

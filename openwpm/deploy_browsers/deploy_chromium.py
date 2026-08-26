@@ -11,10 +11,9 @@ from typing import Any, Dict, Optional, Tuple
 
 from easyprocess import EasyProcessError
 from multiprocess import Queue
-
 from pyvirtualdisplay import Display
 
-from ..browser import BrowserSession, DEFAULT_VIEWPORT
+from ..browser import DEFAULT_VIEWPORT, BrowserSession
 from ..browser_bin import chromium_executable, ensure_browsers_path
 from ..commands.profile_commands import load_profile
 from ..config import BrowserParamsInternal, ConfigEncoder, ManagerParamsInternal
@@ -33,9 +32,7 @@ def deploy_chromium(
     chromium_executable()  # fail closed if the binary is missing
 
     browser_profile_path = Path(
-        tempfile.mkdtemp(
-            prefix="chromium_profile_", dir=browser_params.tmp_profile_dir
-        )
+        tempfile.mkdtemp(prefix="chromium_profile_", dir=browser_params.tmp_profile_dir)
     )
     status_queue.put(("STATUS", "Profile Created", browser_profile_path))
 
@@ -51,9 +48,7 @@ def deploy_chromium(
             "BROWSER %i: Loading recovered browser profile from: %s"
             % (browser_params.browser_id, browser_params.recovery_tar)
         )
-        load_profile(
-            browser_profile_path, browser_params, browser_params.recovery_tar
-        )
+        load_profile(browser_profile_path, browser_params, browser_params.recovery_tar)
     status_queue.put(("STATUS", "Profile Tar", None))
 
     display_mode = browser_params.display_mode
@@ -136,6 +131,7 @@ def deploy_chromium(
     page.set_viewport_size(
         {"width": DEFAULT_VIEWPORT["width"], "height": DEFAULT_VIEWPORT["height"]}
     )
+    _ensure_profile_markers(browser_profile_path)
 
     browser_pid = None
     try:
@@ -165,3 +161,21 @@ def deploy_chromium(
         % (browser_params.browser_id, browser_pid)
     )
     return session, browser_profile_path, display
+
+
+def _ensure_profile_markers(browser_profile_path: Path) -> None:
+    """Write Chromium profile markers Playwright may not flush until quit.
+
+    dump_profile requires Default/Preferences and Local State. Creating them
+    at launch lets test_save_incomplete_profile_error unlink Preferences
+    (FileNotFoundError if the file never existed) and still leave a dumpable
+    profile for the happy path.
+    """
+    default_dir = browser_profile_path / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    prefs = default_dir / "Preferences"
+    if not prefs.exists():
+        prefs.write_text("{}", encoding="utf-8")
+    local_state = browser_profile_path / "Local State"
+    if not local_state.exists():
+        local_state.write_text("{}", encoding="utf-8")

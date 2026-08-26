@@ -3,54 +3,55 @@
   <head>
     <title>Test page - POST request using AJAX</title>
     <meta charset="utf-8"/>
-    <script src="https://code.jquery.com/jquery-3.1.1.min.js"
-      integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8="
-      crossorigin="anonymous"></script>
     <script type="text/javascript" src="shared/utils.js"></script>
     <script type="application/javascript">
-
-      function do_xhr(data) {
+      function do_xhr(data, contentType) {
         var xhr = new XMLHttpRequest();
         xhr.open("POST", "bogus_submit.html");
+        if (contentType) {
+          xhr.setRequestHeader("Content-Type", contentType);
+        }
         xhr.send(data);
       }
 
-	    function send_form_data() {
-        	// Use "FormData"
-        	var formData = new FormData();
-        	formData.append("email", "test@example.com")
-        	formData.append("username", "name surname+你好");
-        	formData.append("test", "ПриватБанк – банк для тих, хто йде вперед");
-        	do_xhr(formData);
-	    }
+      function send_form_data() {
+        var formData = new FormData();
+        formData.append("email", "test@example.com");
+        formData.append("username", "name surname+你好");
+        formData.append("test", "ПриватБанк – банк для тих, хто йде вперед");
+        do_xhr(formData);
+      }
 
-	    function send_binary_data(){
-	      // Taken from: https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/Sending_and_Receiving_Binary_Data#Sending_typed_arrays_as_binary_data
-	      var myArray = new ArrayBuffer(100);
-	      var longInt8View = new Uint8Array(myArray);
+      function send_object() {
+        var params = new URLSearchParams();
+        params.append("email", "test@example.com");
+        params.append("username", "name surname+你好");
+        params.append("test", "ПриватБанк – банк для тих, хто йде вперед");
+        do_xhr(
+          params.toString(),
+          "application/x-www-form-urlencoded;charset=UTF-8"
+        );
+      }
 
-	      for (var i=0; i< longInt8View.length; i++) {
-	        longInt8View[i] = i % 255;
-	      }
-
+      function send_binary_data() {
+        var myArray = new ArrayBuffer(100);
+        var longInt8View = new Uint8Array(myArray);
+        for (var i = 0; i < longInt8View.length; i++) {
+          longInt8View[i] = i % 255;
+        }
         do_xhr(myArray);
-	    }
+      }
 
-      $(document).ready(function(){
+      document.addEventListener("DOMContentLoaded", function () {
         var format = getParameterByName("format");
         if (format == "formData") {
           send_form_data();
         } else if (format == "object") {
-          var post_obj = {
-            email:"test@example.com",
-            username:"name surname+你好",
-            test:"ПриватБанк – банк для тих, хто йде вперед"
-          };
-          $.post("bogus_submit.html", post_obj);
+          send_object();
         } else if (format == "noKeyValue") {
-          do_xhr('test@example.com + name surname');
+          do_xhr("test@example.com + name surname");
         } else if (format == "noKeyValueBase64") {
-          do_xhr(btoa('test@example.com + name surname'));
+          do_xhr(btoa("test@example.com + name surname"));
         } else if (format == "binary") {
           send_binary_data();
         }
