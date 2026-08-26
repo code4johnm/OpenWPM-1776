@@ -1,0 +1,131 @@
+# .github/workflows/sbom-sign.yml
+name: SBOM and sign
+
+on:
+  push:
+    tags: ["v*.*.*"]
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+  actions: read
+  security-events: write
+
+env:
+  PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+  SYFT_VERSION: v1.27.1
+  GRYPE_VERSION: v0.87.0
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: Fail if Chromium binary missing
+        run: python -c "from openwpm.browser_bin import chromium_executable, chromium_version; print(chromium_executable()); print(chromium_version())"
+
+      - name: Install checksum-pinned syft and grype CLIs
+        run: bash scripts/install-sbom-tools.sh
+        # Reads version+sha256 from conf/sbom-policy.yml; sha256sum -c; install to /usr/local/bin
+        # Leaves `syft` and `grype` on PATH. Fails if checksum mismatch.
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@REPLACE_AT_LAND
+        with:
+          cosign-release: v2.4.3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (or load on PR)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: SPDX 3.0 image SBOM (syft CLI)
+        run: |
+          mkdir -p evidence/sbom
+          syft version | tee evidence/sbom/syft-version.txt
+          syft "${{ env.IMAGE }}:${{ github.sha }}" -o "spdx-json@3.0=evidence/sbom/image.syft.spdx.json"
+          # If syft errors on @3.0, this step fails. Do not retry with -o spdx-json.
+
+      - name: Source SBOM + optional CycloneDX (same CLI on PATH)
+        run: |
+          syft dir:. -o "spdx-json@3.0=evidence/sbom/source.spdx.json"
+          syft "${{ env.IMAGE }}:${{ github.sha }}" -o "cyclonedx-json@1.6=evidence/sbom/image.cdx.json" || true
+
+      - name: Merge CISA fields + Chromium hash + assert
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          SYFT_VERSION: ${{ env.SYFT_VERSION }}
+        run: |
+          python scripts/merge-spdx3-cisa.py \
+            --input evidence/sbom/image.syft.spdx.json \
+            --output evidence/sbom/image.spdx.json \
+            --sbom-type build \
+            --git-sha "$GITHUB_SHA" \
+            --syft-version "$SYFT_VERSION" \
+            --chromium-image "${{ env.IMAGE }}:${{ github.sha }}"
+          python scripts/assert-spdx3-cisa.py evidence/sbom/image.spdx.json
+
+      - name: Grype JSON (CLI redirect)
+        run: grype "${{ env.IMAGE }}:${{ github.sha }}" -o json > evidence/sbom/grype.json
+        # Increment 1: archive grype.json only. No empty OpenVEX stub.
+
+      - name: Upload unsigned evidence (PRs)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-unsigned-${{ github.sha }}
+          path: evidence/
+
+      - name: cosign sign + attest SPDX (tags/master; requires push+digest)
+        if: github.event_name != 'pull_request'
+        run: |
+          DIGEST="${{ steps.build.outputs.digest }}"
+          test -n "$DIGEST"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign attest --yes --predicate evidence/sbom/image.spdx.json --type spdxjson "${IMAGE}@${DIGEST}"
+
+      - name: Verify attestation (promote gate)
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp 'https://github.com/.+/.github/workflows/sbom-sign.yml@.+' \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
+          cosign verify-attestation --type spdxjson \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp 'https://github.com/.+/.github/workflows/sbom-sign.yml@.+' \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload evidence
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-signed-${{ github.sha }}
+          path: evidence/

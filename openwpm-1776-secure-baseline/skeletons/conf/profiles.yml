@@ -1,0 +1,144 @@
+# conf/profiles.yml
+# Rebuild/redeploy. Not a mid-crawl toggle.
+# Planes: overlay (apply_profile → ConfigError) | ci_policy (CI) | operator_policy (entrypoint/checklist).
+# Omitted ManagerParams/BrowserParams fields inherit dataclass defaults
+# (js_instrument_settings, locale, timezone_id, tmp_profile_dir, recovery_tar,
+#  data_directory, log_path, failure_limit, …).
+# research_purpose: str; apply_profile treats null, missing, and strip()=="" as empty.
+
+version: 1
+platform_version: "0.35.0"
+
+# High instruments (purpose required in audit/prod). HTTP is High because
+# MeasurementController._record_request always stores post_body* and full headers.
+high_instruments: [cookie_instrument, js_instrument, http_instrument, save_content]
+# Medium; default-off in prod overlay; no research_purpose required.
+medium_instruments: [navigation_instrument, dns_instrument]
+
+profiles:
+  dev:
+    description: Local interactive development. Headed display allowed.
+    fail_closed: false
+    overlay:
+      manager:
+        testing: true
+        memory_watchdog: false
+        process_watchdog: false
+        num_browsers: 1
+      browser:
+        browser: chromium
+        display_mode: native
+        cookie_instrument: true
+        js_instrument: false
+        http_instrument: false
+        navigation_instrument: false
+        dns_instrument: false
+        save_content: false
+        callstack_instrument: false
+        tracking_protection: false
+        donottrack: false
+        bot_mitigation: false
+        tp_cookies: always
+        launch_args: []
+        prefs: {}          # ignored on Chromium; deploy_chromium.py warns if non-empty
+        custom_params:
+          openwpm_profile: dev
+    ci_policy:
+      require_signed_image: false
+      require_sbom: false          # required if the build is published
+      allow_floating_deps: false
+    operator_policy:
+      allow_native_display: true
+      log_level_sentry_breadcrumb: DEBUG
+
+  audit:
+    description: Minimization overlay. Headless/xvfb. CI requires signed SBOM.
+    fail_closed: true
+    overlay:
+      manager:
+        testing: false
+        memory_watchdog: true
+        process_watchdog: true
+        num_browsers: 1
+      browser:
+        browser: chromium
+        display_mode: headless     # xvfb allowed by overlay check
+        cookie_instrument: false
+        js_instrument: false
+        http_instrument: false
+        navigation_instrument: false
+        dns_instrument: false
+        save_content: false
+        callstack_instrument: false
+        tracking_protection: false
+        donottrack: false
+        bot_mitigation: false
+        tp_cookies: always
+        launch_args: []
+        prefs: {}
+        maximum_profile_size: 104857600   # 100 MiB
+        custom_params:
+          openwpm_profile: audit
+          # omit research_purpose unless enabling a High instrument
+    ci_policy:
+      require_signed_image: true
+      require_sbom: true
+      require_config_snapshot_tests: true
+      allow_floating_deps: false
+    operator_policy:
+      allow_native_display: false
+      allowed_display_modes: [headless, xvfb]
+      log_level_sentry_breadcrumb: ERROR
+
+  prod:
+    description: >
+      Production measurement. Headless/xvfb. High instruments off unless
+      research_purpose. Non-root image. Docker Chromium is still --no-sandbox.
+    fail_closed: true
+    overlay:
+      manager:
+        testing: false
+        memory_watchdog: true
+        process_watchdog: true
+        num_browsers: 1
+      browser:
+        browser: chromium
+        display_mode: headless
+        cookie_instrument: false   # dataclass default True is incompatible with prod
+        js_instrument: false
+        http_instrument: false
+        navigation_instrument: false
+        dns_instrument: false
+        save_content: false
+        callstack_instrument: false
+        tracking_protection: false
+        donottrack: false
+        bot_mitigation: false
+        tp_cookies: always
+        launch_args: []
+        prefs: {}
+        profile_archive_dir: null
+        seed_tar: null
+        maximum_profile_size: 104857600
+        custom_params:
+          openwpm_profile: prod
+    ci_policy:
+      require_signed_image: true
+      require_sbom: true
+      allow_floating_deps: false
+    operator_policy:
+      allow_native_display: false
+      allowed_display_modes: [headless, xvfb]
+      require_non_root_container: true
+      require_shm_size: "2g"
+      forbid_interactive_debug: true
+      forbid_OPENWPM_CHROMIUM_EXECUTABLE: true
+      cloud_credentials: env_or_secret_manager_only
+      log_level_sentry_breadcrumb: ERROR
+      docker_chromium_sandbox: always_off   # increment-1 fact; not an operator choice
+
+# Cookie-study on crawler.py / Docker (no YAML edit required):
+#   OPENWPM_PROFILE=prod
+#   OPENWPM_RESEARCH_PURPOSE='protocol-ID cookie-sync'
+#   COOKIE_INSTRUMENT=1
+# Overlay still applies first; env re-apply after purpose is the opt-in path.

@@ -1,0 +1,58 @@
+# conf/sbom-policy.yml
+version: 1
+primary_encoder: "spdx-json@3.0"     # syft CLI only; NOT sbom-action format enum
+optional_encoder: "cyclonedx-json@1.6"
+spec_version_prefix: "3."
+forbid_fallback_spdx_23: true
+
+ai_sbom_elements: not_applicable
+ai_sbom_rationale: >
+  OpenWPM-1776 0.35.0 has no in-tree AI model, training data, or inference
+  service. CISA SBOM-for-AI (2026-05-12) does not apply unless introduced.
+
+tools:  # hashes filled at PR-4 land from the GitHub release checksums.txt
+  syft:
+    version: v1.27.1
+    asset: syft_1.27.1_linux_amd64.tar.gz
+    sha256: "REPLACE_AT_LAND"         # 64-hex from release checksums; sha256sum -c
+  grype:
+    version: v0.87.0
+    asset: grype_0.87.0_linux_amd64.tar.gz
+    sha256: "REPLACE_AT_LAND"
+  cosign:
+    action: sigstore/cosign-installer
+    git_sha: "REPLACE_AT_LAND"        # 40-char commit SHA
+    version: v2.4.3
+
+coverage_targets:
+  - conda_environment: environment.yaml
+  - pip_packages: environment.yaml#pip
+  - npm_root: package-lock.json
+  - playwright_python: pkg:pypi/playwright@1.62.0
+  - playwright_chromium:
+      purl: "pkg:generic/playwright-chromium@151.0.7922.34"
+      locate: openwpm.browser_bin.chromium_executable
+      hash_algorithm: sha256
+      fail_if_missing: true
+  - docker_base: ubuntu:22.04
+  - os_packages: syft image dpkg
+
+vuln_scan:
+  tool: grype
+  artifact: evidence/sbom/grype.json
+  vex_statements: increment_2     # do not ship empty OpenVEX as SFR-VEX
+
+signing:
+  registry: ghcr.io/${GITHUB_REPOSITORY}
+  method: cosign-keyless-oidc
+  identity_regexp: "https://github.com/.+/.github/workflows/sbom-sign.yml@.+"
+  oidc_issuer: "https://token.actions.githubusercontent.com"
+  image: "cosign sign --yes ghcr.io/org/repo@<digest>"
+  sbom: "cosign attest --yes --predicate evidence/sbom/image.spdx.json --type spdxjson ghcr.io/org/repo@<digest>"
+  deprecated_attach: forbidden
+  docker_hub_latest: not_prod
+
+allowlisted_indexes:
+  conda: [conda-forge]
+  pip: [https://pypi.org/simple]
+  npm: [https://registry.npmjs.org]
