@@ -247,3 +247,26 @@ fields = [
     pa.field("instance_id", pa.uint32(), nullable=False),
 ]
 PQ_SCHEMAS["dns_responses"] = pa.schema(fields)
+
+# crawl_run_provenance
+fields = [
+    pa.field("browser_id", pa.uint32(), nullable=False),
+    pa.field("browser_engine", pa.string(), nullable=False),
+    pa.field("display_mode", pa.string(), nullable=False),
+    pa.field("headed", pa.bool_(), nullable=False),
+    pa.field("playwright_version", pa.string(), nullable=False),
+    pa.field("user_agent", pa.string(), nullable=False),
+    pa.field("instance_id", pa.uint32(), nullable=False),
+]
+PQ_SCHEMAS["crawl_run_provenance"] = pa.schema(fields)
+
+# crawl_outcome
+fields = [
+    pa.field("visit_id", pa.int64(), nullable=False),
+    pa.field("browser_id", pa.uint32(), nullable=False),
+    pa.field("http_status", pa.int32(), nullable=False),
+    pa.field("outcome", pa.string(), nullable=False),
+    pa.field("resource_scope", pa.string(), nullable=False),
+    pa.field("instance_id", pa.uint32(), nullable=False),
+]
+PQ_SCHEMAS["crawl_outcome"] = pa.schema(fields)

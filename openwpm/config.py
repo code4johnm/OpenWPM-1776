@@ -144,6 +144,10 @@ class BrowserParams(DataClassJsonMixin):
     donottrack: bool = False
     tracking_protection: bool = False
     custom_params: Dict[Any, Any] = field(default_factory=lambda: {})
+    record_provenance: bool = False
+    """Write one crawl_run_provenance row per browser (engine, display, UA). Off by default."""
+    record_crawl_outcome: Union[bool, Literal["status_codes_only"]] = False
+    """Record main-document HTTP 403/429/503 only. False or ``status_codes_only``. True is ConfigError."""
 
 
 @dataclass
@@ -259,6 +263,28 @@ def validate_browser_params(browser_params: BrowserParams) -> None:
             raise ConfigError(
                 "tracking_protection is not supported on Chromium. "
                 "Leave this flag False."
+            )
+
+        if browser_params.record_crawl_outcome is True:
+            raise ConfigError(
+                "record_crawl_outcome=True is not allowed. "
+                "Use False (default) or 'status_codes_only'."
+            )
+        if browser_params.record_crawl_outcome not in (False, "status_codes_only"):
+            raise ConfigError(
+                CONFIG_ERROR_STRING.format(
+                    value=browser_params.record_crawl_outcome,
+                    value_list=[False, "status_codes_only"],
+                    parameter_name="record_crawl_outcome",
+                )
+            )
+        if not isinstance(browser_params.record_provenance, bool):
+            raise ConfigError(
+                GENERAL_ERROR_STRING.format(
+                    value=browser_params.record_provenance,
+                    parameter_name="record_provenance",
+                    params_type="BrowserParams",
+                )
             )
 
         if not isinstance(browser_params.save_content, bool) and not isinstance(

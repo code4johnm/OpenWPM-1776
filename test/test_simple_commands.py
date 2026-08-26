@@ -28,8 +28,7 @@ url_d = utilities.BASE_TEST_URL + "/simple_d.html"
 
 rendered_js_url = utilities.BASE_TEST_URL + "/property_enumeration.html"
 
-# Expected nested page source
-# This needs to be changed back once #887 is addressed
+# Expected nested page source (includes depth-6 child6a; Playwright walks all frames)
 
 NESTED_TEST_DIR = "/recursive_iframes/"
 NESTED_FRAMES_URL = utilities.BASE_TEST_URL + NESTED_TEST_DIR + "parent.html"
@@ -84,6 +83,15 @@ EXPECTED_PARENTS = {
         D2_BASE + "child2a.html",
         D3_BASE + "child3a.html",
         D4_BASE + "child4a.html",
+    ],
+    D5_BASE
+    + "child6a.html": [
+        NESTED_FRAMES_URL,
+        D1_BASE + "child1a.html",
+        D2_BASE + "child2a.html",
+        D3_BASE + "child3a.html",
+        D4_BASE + "child4a.html",
+        D5_BASE + "child5a.html",
     ],
 }
 
@@ -319,13 +327,13 @@ def test_browse_http_table_valid(http_params, task_manager_creator, display_mode
     )
     assert qry_res[0][0] == visit_ids[url_a]
 
-    # We expect 4 urls: a,c,d and a favicon request
+    # a,c,d always. Chromium headless may omit the automatic /favicon.ico probe.
     qry_res = db_utils.query_db(
         db,
         "SELECT COUNT(DISTINCT url) FROM http_responses WHERE visit_id = ?",
         (visit_ids[url_a],),
     )
-    assert qry_res[0][0] == 4
+    assert qry_res[0][0] in (3, 4)
 
 
 @pytest.mark.parametrize("display_mode", scenarios)
@@ -403,13 +411,13 @@ def test_browse_wrapper_http_table_valid(
     )
     assert qry_res[0][0] == visit_ids[url_a]
 
-    # We expect 4 urls: a,c,d and a favicon request
+    # a,c,d always. Chromium headless may omit the automatic /favicon.ico probe.
     qry_res = db_utils.query_db(
         db,
         "SELECT COUNT(DISTINCT url) FROM http_responses WHERE visit_id = ?",
         (visit_ids[url_a],),
     )
-    assert qry_res[0][0] == 4
+    assert qry_res[0][0] in (3, 4)
 
 
 @pytest.mark.parametrize("display_mode", scenarios)

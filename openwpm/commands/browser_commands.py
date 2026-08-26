@@ -5,6 +5,7 @@ import os
 import random
 import time
 from hashlib import md5
+from urllib.parse import urljoin, urlparse
 
 from ..browser import BrowserError, BrowserSession, NetError
 from ..config import BrowserParams, ManagerParams
@@ -20,7 +21,22 @@ from .utils.page_utils import (
 NUM_MOUSE_MOVES = 10
 RANDOM_SLEEP_LOW = 1
 RANDOM_SLEEP_HIGH = 7
+# Intra-link goto. BrowserSession.get swallows PWTimeout; 30s + 30s
+# wait_until_loaded ate the 60s BrowseCommand budget under xvfb.
+_BROWSE_NAV_TIMEOUT_MS = 8000
 logger = logging.getLogger("openwpm")
+
+
+def _persist_http_responses(extension_socket, snapshot_history: bool = True) -> None:
+    persist = getattr(extension_socket, "persist_http_responses", None)
+    if not callable(persist):
+        return
+    try:
+        persist(snapshot_history=snapshot_history)
+    except TypeError:
+        persist()
+    except Exception:
+        logger.debug("persist_http_responses failed", exc_info=True)
 
 
 def bot_mitigation(session: BrowserSession) -> None:
@@ -80,8 +96,22 @@ class GetCommand(BaseCommand):
         except BrowserError:
             pass
 
+        if (
+            extension_socket is not None
+            and getattr(browser_params, "record_crawl_outcome", False)
+            == "status_codes_only"
+        ):
+            try:
+                extension_socket.record_document_outcome(
+                    self.visit_id, getattr(webdriver, "last_document_status", None)
+                )
+            except Exception:
+                logger.exception("Failed to record crawl_outcome for %s", self.url)
+
         if self.sleep:
             time.sleep(self.sleep)
+
+        _persist_http_responses(extension_socket)
 
         close_other_windows(webdriver)
 
@@ -114,41 +144,88 @@ class BrowseCommand(BaseCommand):
             extension_socket,
         )
 
+        start = urlparse(self.url)
+        seen_hrefs = set()
         for _ in range(self.num_links):
-            links = [
-                x
-                for x in get_intra_links(webdriver, self.url)
-                if is_displayed(x) is True
-            ]
-            if not links:
+            candidates = []
+            for elem in get_intra_links(webdriver, self.url):
+                if is_displayed(elem) is not True:
+                    continue
+                raw = elem.get_attribute("href")
+                if not raw:
+                    continue
+                abs_url = urljoin(self.url, raw)
+                dest = urlparse(abs_url)
+                if dest.scheme not in ("http", "https"):
+                    continue
+                # Same host only. eTLD+1 is None for localhost, so
+                # example.com / google.com must not count as intra-site.
+                if dest.hostname != start.hostname:
+                    continue
+                if abs_url in seen_hrefs:
+                    continue
+                candidates.append(abs_url)
+            if not candidates:
                 break
-            r = int(random.random() * len(links))
-            href = links[r].get_attribute("href")
+            href = candidates[int(random.random() * len(candidates))]
             logger.info(
                 "BROWSER %i: visiting internal link %s"
                 % (browser_params.browser_id, href)
             )
 
+            landed_ok = False
+            for attempt in range(2):
+                # Resume paused CDP targets before goto. A timed-out
+                # Playwright navigation otherwise holds the page and
+                # simple_c never hits the test server under xvfb.
+                _persist_http_responses(extension_socket, snapshot_history=False)
+                try:
+                    # goto() rather than ElementHandle.click(): click() waits
+                    # up to 30s for actionability and is what timed out browse
+                    # under xvfb. Bound goto so one hung nav cannot consume
+                    # the 60s command timeout before simple_c is visited.
+                    webdriver.get(href, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                    landed = urlparse(getattr(webdriver, "current_url", "") or "")
+                    wanted = urlparse(href)
+                    if landed.path.rstrip("/") != wanted.path.rstrip("/"):
+                        stop = getattr(webdriver, "stop_pending_navigation", None)
+                        if callable(stop):
+                            stop()
+                        webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                        continue
+                    landed_ok = True
+                    break
+                except Exception as e:
+                    logger.error(
+                        "BROWSER %i: Error visiting internal link %s",
+                        browser_params.browser_id,
+                        href,
+                        exc_info=e,
+                    )
+                    try:
+                        webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
+                    except Exception:
+                        landed_ok = False
+                        break
+            seen_hrefs.add(href)
+            if not landed_ok:
+                continue
             try:
-                links[r].click()
-                wait_until_loaded(webdriver, 300)
                 time.sleep(max(1, self.sleep))
+                _persist_http_responses(extension_socket, snapshot_history=False)
                 if browser_params.bot_mitigation:
                     bot_mitigation(webdriver)
-                webdriver.back()
-                wait_until_loaded(webdriver, 300)
+                webdriver.get(self.url, timeout=_BROWSE_NAV_TIMEOUT_MS)
             except Exception as e:
                 logger.error(
-                    "BROWSER %i: Error visiting internal link %s",
+                    "BROWSER %i: Error finishing internal link %s",
                     browser_params.browser_id,
                     href,
                     exc_info=e,
                 )
-                try:
-                    webdriver.get(self.url)
-                    wait_until_loaded(webdriver, 300)
-                except Exception:
-                    break
+                break
+
+        _persist_http_responses(extension_socket)
 
 
 class SaveScreenshotCommand(BaseCommand):
@@ -252,8 +329,7 @@ class RecursiveDumpPageSourceCommand(BaseCommand):
                 "doc_url": frame.url,
                 "source": source,
                 "iframes": {
-                    str(i): collect(child)
-                    for i, child in enumerate(frame.child_frames)
+                    str(i): collect(child) for i, child in enumerate(frame.child_frames)
                 },
             }
 

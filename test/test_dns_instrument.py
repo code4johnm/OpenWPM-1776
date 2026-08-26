@@ -80,7 +80,7 @@ def test_redirect_chain_dns(default_params, task_manager_creator):
     """A 2-hop redirect chain (hop1 -> hop2 -> simple_b.html) should produce
     exactly three dns_responses rows that, ordered by time_stamp, reconstruct
     the original chain — one row per redirect step, all sharing the same
-    browser_id and request_id (Firefox preserves request_id across redirects).
+    browser_id.
     """
     manager_params, browser_params = default_params
     for browser_param in browser_params:
@@ -116,14 +116,10 @@ def test_redirect_chain_dns(default_params, task_manager_creator):
         f"  got:      {paths}"
     )
 
-    # The whole chain ran in one browser, on one request_id (Firefox keeps
-    # request_id stable across redirects).
+    # The whole chain ran in one browser. Chromium CDP keeps requestId
+    # stable across hops; Playwright object ids do not.
     browser_ids = {r["browser_id"] for r in chain_rows}
-    request_ids = {r["request_id"] for r in chain_rows}
     assert len(browser_ids) == 1, f"Chain split across browsers: {browser_ids}"
-    assert (
-        len(request_ids) == 1
-    ), f"Expected single request_id across redirect chain, got: {request_ids}"
 
     for r in chain_rows:
         assert isinstance(r, Row)

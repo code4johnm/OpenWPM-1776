@@ -32,11 +32,7 @@ def total_folder_size(startup: bool = False, root_dir: str = "/tmp") -> str:
     if not startup:
         for dirpath, dirnames, filenames in os.walk(root_dir):
             for file in filenames:
-                if (
-                    "chrom" in file
-                    or "owpm" in file
-                    or "Temp" in file
-                ):
+                if "chrom" in file or "owpm" in file or "Temp" in file:
                     path = os.path.join(dirpath, file)
                     # skip if it is symbolic link
                     if not os.path.islink(path):

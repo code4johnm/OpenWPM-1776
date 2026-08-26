@@ -296,6 +296,23 @@ To activate a given instrument set `browser_params[i].instrument_name = True`
 - Data is saved to the `javascript_cookies` table.
 - Will record cookies set both by JavaScript and via HTTP Responses
 
+### `record_provenance`
+
+- Off by default (`False`).
+- When `True`, writes one `crawl_run_provenance` row per browser after launch:
+  engine, `display_mode`, `headed` (`display_mode != headless`), live
+  `playwright.__version__`, and the live `navigator.userAgent`.
+- Does not enable HTTP/cookie instruments, collect bodies, or change the UA.
+
+### `record_crawl_outcome`
+
+- Off by default (`False`). Allowed value: `"status_codes_only"`.
+- `True` is a `ConfigError`.
+- When `"status_codes_only"`, `GetCommand` records the main-document HTTP
+  status if it is 403, 429, or 503 (`forbidden` / `rate_limited` /
+  `unavailable`, `resource_scope=document`). 200s are not stored.
+- Uses the `page.goto` document response only. Does not enable `http_instrument`.
+
 ## Browser Profile Support
 
 ### Stateful vs Stateless crawls
