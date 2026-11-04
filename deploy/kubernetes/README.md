@@ -15,3 +15,14 @@ Do **not** add HTTP liveness probes. This platform is a batch job.
 Scale-out (many sites) is `crawler.py` + Redis URL queue (upstream worker pattern), not extra replicas of `demo.py`. Set `CALLSTACK_INSTRUMENT=0` until that default is fixed.
 
 Privileged is not required. Chromium in this image is already `--no-sandbox`; `privileged: true` would only widen residual risk.
+
+## Dashboard
+
+`dashboard.yaml` is the launcher. It publishes Service `openwpm-1776` on port 8770 and Deployment `openwpm-dashboard` (git keeps `replicas: 0`). The page edits `datadir/crawl-links.json`, then creates Job `openwpm-crawl` from image `openwpm-1776:local`. That Job runs `dashboard/crawl_list.py`. It does not use `crawler.py`, Redis, or GCS. Callstack instrumentation stays off.
+
+```bash
+kubectl apply -f deploy/kubernetes/dashboard.yaml
+kubectl -n default scale deployment/openwpm-dashboard --replicas=1
+```
+
+Open `http://192.168.0.47:8770/` on this LAN. The k38 console card OpenWPM-1776 launches the same Deployment.

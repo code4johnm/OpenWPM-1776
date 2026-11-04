@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>OpenWPM-1776</title>
+<style>
+  :root {
+    --bg: #000; --text: #e7e9ea; --muted: #71767b; --line: #2f3336;
+    --accent: #1d9bf0; --bad: #f4212e; --ok: #00ba7c; --warn: #ffd400;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { max-width: 1100px; margin: 0 auto; padding: 16px 16px 48px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+  h2 { margin: 0; font-size: 20px; font-weight: 800; }
+  p { margin: 0; color: var(--muted); }
+  header { margin-bottom: 16px; }
+  .sub { margin-top: 4px; }
+  section {
+    border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 16px; margin-top: 12px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, input, select {
+    font: inherit; color: var(--text); background: transparent;
+    border: 1px solid #536471; border-radius: 999px; min-height: 44px; padding: 8px 14px;
+  }
+  button { font-weight: 700; cursor: pointer; }
+  button.primary { background: #eff3f4; color: #0f1419; border-color: transparent; }
+  button.danger { color: var(--bad); border-color: #67070f; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  input[type="url"], input[type="text"], input[type="number"] { border-radius: 12px; width: 100%; }
+  input:focus, select:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.chk { display: flex; gap: 8px; align-items: center; min-height: 44px; color: var(--text); }
+  .links { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .link {
+    display: grid; grid-template-columns: 1fr 180px auto; gap: 8px; align-items: center;
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px; font-weight: 700;
+  }
+  .mark { width: 11px; height: 11px; display: inline-block; }
+  .st-idle .mark, .st-pending .mark { height: 3px; width: 12px; background: var(--muted); align-self: center; }
+  .st-running .mark {
+    width: 0; height: 0; border-style: solid; border-width: 0 6px 11px 6px;
+    border-color: transparent transparent var(--warn) transparent;
+  }
+  .st-succeeded .mark { border-radius: 50%; background: var(--ok); }
+  .st-failed .mark, .st-error .mark { background: var(--bad); }
+  pre {
+    margin: 12px 0 0; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+    max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font: 13px/1.4 ui-monospace, "Cascadia Mono", monospace;
+  }
+  .sites { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .site { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .err { color: var(--bad); margin-top: 8px; }
+  @media (max-width: 720px) {
+    .link { grid-template-columns: 1fr; }
+    body { padding: 10px 10px 32px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenWPM-1776</h1>
+  <p class="sub" id="where">Crawl dashboard</p>
+</header>
+
+<section>
+  <div class="row" style="justify-content: space-between;">
+    <h2>Crawl links</h2>
+    <span class="status" id="phase"><span class="mark"></span><span>Idle</span></span>
+  </div>
+  <p class="sub">Add, edit, or remove http and https links. The list is saved on this machine and is what the next crawl visits.</p>
+  <div class="links" id="links"></div>
+  <div class="row" style="margin-top: 12px;">
+    <button type="button" id="add" class="primary">Add link</button>
+    <button type="button" id="save">Save list</button>
+  </div>
+  <p class="err" id="linkerr" hidden></p>
+</section>
+
+<section>
+  <h2>Crawl controls</h2>
+  <p class="sub">Callstack capture stays off. It cannot start in this build.</p>
+  <div class="row" style="margin-top: 12px;">
+    <label>Dwell seconds <input id="dwell" type="number" min="0" max="120" value="3" style="width: 6rem;"></label>
+    <label>Timeout <input id="timeout" type="number" min="5" max="180" value="60" style="width: 6rem;"></label>
+    <label class="chk"><input id="headless" type="checkbox" checked> Headless</label>
+  </div>
+  <div class="row">
+    <label class="chk"><input id="http" type="checkbox" checked> HTTP</label>
+    <label class="chk"><input id="cookie" type="checkbox" checked> Cookies</label>
+    <label class="chk"><input id="navigation" type="checkbox" checked> Navigation</label>
+    <label class="chk"><input id="js" type="checkbox" checked> JavaScript</label>
+    <label class="chk"><input id="dns" type="checkbox" checked> DNS</label>
+  </div>
+  <div class="row" style="margin-top: 8px;">
+    <button type="button" id="launch" class="primary">Launch crawl</button>
+    <button type="button" id="stop" class="danger">Stop crawl</button>
+    <button type="button" id="refresh">Refresh</button>
+  </div>
+  <p class="err" id="runerr" hidden></p>
+  <div class="sites" id="sites"></div>
+</section>
+
+<section>
+  <h2>Crawl output</h2>
+  <p class="sub">The newest crawl pod log. Visit results are listed above as the Job writes them.</p>
+  <pre id="log">No log yet.</pre>
+</section>
+
+<script>
+(function () {
+  const phaseEl = document.getElementById("phase");
+  const linksEl = document.getElementById("links");
+  const sitesEl = document.getElementById("sites");
+  const logEl = document.getElementById("log");
+  const linkErr = document.getElementById("linkerr");
+  const runErr = document.getElementById("runerr");
+  document.getElementById("where").textContent = location.host;
+
+  function showErr(node, message) {
+    node.hidden = !message;
+    node.textContent = message || "";
+  }
+
+  function row(link) {
+    const box = document.createElement("div");
+    box.className = "link";
+    const url = document.createElement("input");
+    url.type = "url";
+    url.required = true;
+    url.placeholder = "https://example.com/";
+    url.value = link.url || "";
+    url.setAttribute("aria-label", "Crawl URL");
+    const note = document.createElement("input");
+    note.type = "text";
+    note.placeholder = "Note";
+    note.value = link.note || "";
+    note.setAttribute("aria-label", "Note");
+    const buttons = document.createElement("div");
+    buttons.className = "row";
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "Up";
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "Down";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "Remove";
+    up.addEventListener("click", function () {
+      const prev = box.previousElementSibling;
+      if (prev) linksEl.insertBefore(box, prev);
+    });
+    down.addEventListener("click", function () {
+      const next = box.nextElementSibling;
+      if (next) linksEl.insertBefore(next, box);
+    });
+    remove.addEventListener("click", function () { box.remove(); });
+    buttons.append(up, down, remove);
+    box.append(url, note, buttons);
+    return box;
+  }
+
+  function collect() {
+    return Array.prototype.map.call(linksEl.querySelectorAll(".link"), function (box) {
+      const fields = box.querySelectorAll("input");
+      return { url: fields[0].value.trim(), note: fields[1].value.trim() };
+    }).filter(function (item) { return item.url; });
+  }
+
+  function settingsBody() {
+    return {
+      dwell: Number(document.getElementById("dwell").value),
+      timeout: Number(document.getElementById("timeout").value),
+      headless: document.getElementById("headless").checked,
+      http: document.getElementById("http").checked,
+      cookie: document.getElementById("cookie").checked,
+      navigation: document.getElementById("navigation").checked,
+      js: document.getElementById("js").checked,
+      dns: document.getElementById("dns").checked
+    };
+  }
+
+  function fillSettings(settings) {
+    ["dwell", "timeout"].forEach(function (id) {
+      if (settings[id] != null) document.getElementById(id).value = settings[id];
+    });
+    ["headless", "http", "cookie", "navigation", "js", "dns"].forEach(function (id) {
+      if (typeof settings[id] === "boolean") document.getElementById(id).checked = settings[id];
+    });
+  }
+
+  function setPhase(name) {
+    const label = name || "idle";
+    phaseEl.className = "status st-" + label;
+    phaseEl.innerHTML = '<span class="mark" aria-hidden="true"></span><span>' + label + "</span>";
+  }
+
+  async function send(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(function () { return { error: res.statusText }; });
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  async function saveAll() {
+    showErr(linkErr, "");
+    await send("/api/links", { links: collect() });
+    await send("/api/settings", settingsBody());
+  }
+
+  function paintSites(crawl) {
+    sitesEl.replaceChildren();
+    (crawl && crawl.sites || []).forEach(function (site) {
+      const line = document.createElement("div");
+      line.className = "site";
+      const left = document.createElement("span");
+      left.textContent = site.url;
+      const right = document.createElement("span");
+      right.textContent = site.ok == null ? (site.detail || "queued") : (site.ok ? "visited" : "failed");
+      line.append(left, right);
+      sitesEl.append(line);
+    });
+    if (crawl && crawl.error) showErr(runErr, crawl.error);
+  }
+
+  async function refresh() {
+    const res = await fetch("/api/state");
+    const data = await res.json();
+    if (!linksEl.dataset.dirty) {
+      linksEl.replaceChildren();
+      ((data.links || {}).links || []).forEach(function (link) { linksEl.append(row(link)); });
+      fillSettings(data.settings || {});
+    }
+    const status = data.status || {};
+    setPhase(status.phase || "idle");
+    paintSites(status.crawl || {});
+    const logRes = await fetch("/api/logs");
+    const log = await logRes.json();
+    logEl.textContent = (log.log || "").trim() || "No log yet.";
+  }
+
+  document.getElementById("add").addEventListener("click", function () {
+    linksEl.dataset.dirty = "1";
+    linksEl.append(row({ url: "", note: "" }));
+  });
+  linksEl.addEventListener("input", function () { linksEl.dataset.dirty = "1"; });
+  document.getElementById("save").addEventListener("click", function () {
+    saveAll().then(function () {
+      delete linksEl.dataset.dirty;
+      return refresh();
+    }).catch(function (err) { showErr(linkErr, err.message); });
+  });
+  document.getElementById("launch").addEventListener("click", function () {
+    showErr(runErr, "");
+    saveAll().then(function () { return send("/api/launch", {}); }).then(refresh)
+      .catch(function (err) { showErr(runErr, err.message); });
+  });
+  document.getElementById("stop").addEventListener("click", function () {
+    showErr(runErr, "");
+    send("/api/stop", {}).then(refresh).catch(function (err) { showErr(runErr, err.message); });
+  });
+  document.getElementById("refresh").addEventListener("click", function () {
+    delete linksEl.dataset.dirty;
+    refresh().catch(function (err) { showErr(runErr, err.message); });
+  });
+  refresh().catch(function (err) { showErr(runErr, err.message); });
+  setInterval(function () { refresh().catch(function () {}); }, 5000);
+})();
+</script>
+</body>
+</html>
