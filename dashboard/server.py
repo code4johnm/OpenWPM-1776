@@ -26,13 +26,14 @@ HOST_ROOT = os.environ.get("OPENWPM_HOST_ROOT", str(ROOT))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 # isort: off
-from openwpm.header_bidding import (  # noqa: E402
+from openwpm.hb_profiles import (  # noqa: E402
     PROFILES,
     compare_profiles,
     dataset_csv,
     dataset_document,
     profile_config,
 )
+
 # isort: on
 
 DATA = Path(os.environ.get("OPENWPM_DATADIR", str(ROOT / "datadir")))
@@ -192,7 +193,9 @@ def clean_settings(payload: object) -> dict:
         "viewport": chosen["viewport"],
         "geolocation": chosen["geolocation"],
         "cookie_state": chosen["cookie_state"],
-        "inject_script": chosen["inject_script"] if isinstance(chosen["inject_script"], str) else "",
+        "inject_script": (
+            chosen["inject_script"] if isinstance(chosen["inject_script"], str) else ""
+        ),
         "consent": chosen["consent"],
         "fingerprint_resistance": bool(chosen["fingerprint_resistance"]),
         "updated": now(),
@@ -261,7 +264,17 @@ def kubectl_raw(method: str, path: str, body: dict | None) -> tuple[int, dict | 
         return (200 if proc.returncode == 0 else 502), (proc.stdout or proc.stderr)
     if method == "GET" and "/pods" in path:
         proc = subprocess.run(
-            ["kubectl", "get", "pods", "-n", NAMESPACE, "-l", f"job-name={JOB}", "-o", "json"],
+            [
+                "kubectl",
+                "get",
+                "pods",
+                "-n",
+                NAMESPACE,
+                "-l",
+                f"job-name={JOB}",
+                "-o",
+                "json",
+            ],
             text=True,
             capture_output=True,
             timeout=20,
@@ -304,7 +317,9 @@ def kubectl_raw(method: str, path: str, body: dict | None) -> tuple[int, dict | 
                 timeout=30,
                 check=False,
             )
-        return (200 if proc.returncode == 0 else 502), {"status": (proc.stdout or proc.stderr).strip()}
+        return (200 if proc.returncode == 0 else 502), {
+            "status": (proc.stdout or proc.stderr).strip()
+        }
     else:
         return 400, {"message": "unsupported"}
     if proc.returncode != 0:
@@ -321,7 +336,11 @@ def job_manifest() -> dict:
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
-        "metadata": {"name": JOB, "namespace": NAMESPACE, "labels": {"app": "openwpm-1776"}},
+        "metadata": {
+            "name": JOB,
+            "namespace": NAMESPACE,
+            "labels": {"app": "openwpm-1776"},
+        },
         "spec": {
             "backoffLimit": 1,
             "ttlSecondsAfterFinished": 86400,
@@ -341,11 +360,17 @@ def job_manifest() -> dict:
                             "image": "openwpm-1776:local",
                             "imagePullPolicy": "Never",
                             "workingDir": "/opt/OpenWPM",
-                            "command": ["python", "/opt/OpenWPM/dashboard/crawl_list.py"],
+                            "command": [
+                                "python",
+                                "/opt/OpenWPM/dashboard/crawl_list.py",
+                            ],
                             "env": [
                                 {"name": "OPENWPM_NO_SANDBOX", "value": "1"},
                                 {"name": "OPENWPM_DISABLE_DEV_SHM", "value": "1"},
-                                {"name": "OPENWPM_DATADIR", "value": "/opt/OpenWPM/datadir"},
+                                {
+                                    "name": "OPENWPM_DATADIR",
+                                    "value": "/opt/OpenWPM/datadir",
+                                },
                                 {"name": "OPENWPM_ROOT", "value": "/opt/OpenWPM"},
                                 {"name": "CALLSTACK_INSTRUMENT", "value": "0"},
                             ],
@@ -371,7 +396,10 @@ def job_manifest() -> dict:
                                 "type": "Directory",
                             },
                         },
-                        {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "2Gi"}},
+                        {
+                            "name": "dshm",
+                            "emptyDir": {"medium": "Memory", "sizeLimit": "2Gi"},
+                        },
                     ],
                 },
             },
@@ -410,18 +438,18 @@ def job_yaml() -> str:
         "          image: openwpm-1776:local\n"
         "          imagePullPolicy: Never\n"
         "          workingDir: /opt/OpenWPM\n"
-        "          command: [\"python\", \"/opt/OpenWPM/dashboard/crawl_list.py\"]\n"
+        '          command: ["python", "/opt/OpenWPM/dashboard/crawl_list.py"]\n'
         "          env:\n"
         "            - name: OPENWPM_NO_SANDBOX\n"
-        "              value: \"1\"\n"
+        '              value: "1"\n'
         "            - name: OPENWPM_DISABLE_DEV_SHM\n"
-        "              value: \"1\"\n"
+        '              value: "1"\n'
         "            - name: OPENWPM_DATADIR\n"
         "              value: /opt/OpenWPM/datadir\n"
         "            - name: OPENWPM_ROOT\n"
         "              value: /opt/OpenWPM\n"
         "            - name: CALLSTACK_INSTRUMENT\n"
-        "              value: \"0\"\n"
+        '              value: "0"\n'
         "          volumeMounts:\n"
         "            - name: src\n"
         "              mountPath: /opt/OpenWPM\n"
@@ -485,7 +513,9 @@ def launch_job() -> dict:
             "POST", f"/apis/batch/v1/namespaces/{NAMESPACE}/jobs", job_manifest()
         )
         if code >= 300:
-            message = created.get("message") if isinstance(created, dict) else str(created)
+            message = (
+                created.get("message") if isinstance(created, dict) else str(created)
+            )
             raise ApiError(502, message or "Kubernetes rejected the crawl Job.")
         return {"ok": True, "phase": "pending"}
     code, created = kubectl_raw("POST", "", None)
@@ -597,7 +627,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"log": pod_log()})
                 return
             if path == "/api/profiles":
-                self.send_json(200, {"profiles": PROFILES, "summary": compare_profiles()})
+                self.send_json(
+                    200, {"profiles": PROFILES, "summary": compare_profiles()}
+                )
                 return
             if path in {"/api/export.json", "/api/export.csv"}:
                 document = dataset_document()
@@ -611,7 +643,9 @@ class Handler(BaseHTTPRequestHandler):
                     filename = "hb-profiles.json"
                 self.send_response(200)
                 self.send_header("Content-Type", mime)
-                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header(
+                    "Content-Disposition", f'attachment; filename="{filename}"'
+                )
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
