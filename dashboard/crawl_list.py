@@ -14,6 +14,7 @@ from pathlib import Path
 from openwpm.command_sequence import CommandSequence
 from openwpm.commands.browser_commands import GetCommand
 from openwpm.config import BrowserParams, ManagerParams
+from openwpm.header_bidding import HeaderBiddingCommand, apply_profile
 from openwpm.storage.sql_provider import SQLiteStorageProvider
 from openwpm.task_manager import TaskManager
 
@@ -89,6 +90,8 @@ def main() -> int:
     browser.js_instrument = bool(settings.get("js", True))
     browser.dns_instrument = bool(settings.get("dns", True))
     browser.callstack_instrument = False
+    profile = apply_profile(browser, settings)
+    hb_log = DATA / "hb-events.jsonl"
     try:
         with TaskManager(
             manager_params,
@@ -105,6 +108,10 @@ def main() -> int:
 
                 sequence = CommandSequence(site, site_rank=index, callback=callback)
                 sequence.append_command(GetCommand(url=site, sleep=dwell), timeout=timeout)
+                sequence.append_command(
+                    HeaderBiddingCommand(profile, str(hb_log)),
+                    timeout=timeout,
+                )
                 manager.execute_command_sequence(sequence)
                 rows[index]["ok"] = outcome["ok"]
                 rows[index]["detail"] = outcome["detail"]

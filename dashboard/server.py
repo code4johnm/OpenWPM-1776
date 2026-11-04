@@ -10,6 +10,7 @@ import json
 import os
 import ssl
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -22,6 +23,18 @@ if not (ROOT / "dashboard").is_dir():
     ROOT = Path(__file__).resolve().parents[1]
 # hostPath inside the crawl Job must be the laptop path, not the mount path.
 HOST_ROOT = os.environ.get("OPENWPM_HOST_ROOT", str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# isort: off
+from openwpm.header_bidding import (  # noqa: E402
+    PROFILES,
+    compare_profiles,
+    dataset_csv,
+    dataset_document,
+    profile_config,
+)
+# isort: on
+
 DATA = Path(os.environ.get("OPENWPM_DATADIR", str(ROOT / "datadir")))
 LINKS = DATA / "crawl-links.json"
 SETTINGS = DATA / "crawl-settings.json"
@@ -48,6 +61,14 @@ DEFAULT_SETTINGS = {
     "navigation": True,
     "js": True,
     "dns": True,
+    "profile": "baseline",
+    "user_agent": "",
+    "viewport": "",
+    "geolocation": "",
+    "cookie_state": "",
+    "inject_script": "",
+    "consent": "",
+    "fingerprint_resistance": False,
 }
 
 
@@ -140,6 +161,23 @@ def clean_settings(payload: object) -> dict:
         raise ApiError(400, "Dwell must be from 0 to 120 seconds.")
     if not 5 <= timeout <= 180:
         raise ApiError(400, "Timeout must be from 5 to 180 seconds.")
+    name = payload.get("profile") or "baseline"
+    if name not in PROFILES:
+        raise ApiError(400, "Profile must be training, testing, or baseline.")
+    try:
+        overrides = {
+            "user_agent": payload.get("user_agent"),
+            "viewport": payload.get("viewport"),
+            "geolocation": payload.get("geolocation"),
+            "cookie_state": payload.get("cookie_state"),
+            "inject_script": payload.get("inject_script"),
+            "consent": payload.get("consent"),
+        }
+        if "fingerprint_resistance" in payload:
+            overrides["fingerprint_resistance"] = payload.get("fingerprint_resistance")
+        chosen = profile_config(name, overrides)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
     out = {
         "dwell": dwell,
         "timeout": timeout,
@@ -149,8 +187,18 @@ def clean_settings(payload: object) -> dict:
         "navigation": bool(payload.get("navigation", True)),
         "js": bool(payload.get("js", True)),
         "dns": bool(payload.get("dns", True)),
+        "profile": name,
+        "user_agent": chosen["user_agent"],
+        "viewport": chosen["viewport"],
+        "geolocation": chosen["geolocation"],
+        "cookie_state": chosen["cookie_state"],
+        "inject_script": chosen["inject_script"] if isinstance(chosen["inject_script"], str) else "",
+        "consent": chosen["consent"],
+        "fingerprint_resistance": bool(chosen["fingerprint_resistance"]),
         "updated": now(),
     }
+    if len(out["inject_script"]) > 2000:
+        raise ApiError(400, "Injected script is too long.")
     return out
 
 
@@ -547,6 +595,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/logs":
                 self.send_json(200, {"log": pod_log()})
+                return
+            if path == "/api/profiles":
+                self.send_json(200, {"profiles": PROFILES, "summary": compare_profiles()})
+                return
+            if path in {"/api/export.json", "/api/export.csv"}:
+                document = dataset_document()
+                if path.endswith(".csv"):
+                    raw = dataset_csv(document).encode("utf-8")
+                    mime = "text/csv; charset=utf-8"
+                    filename = "hb-profiles.csv"
+                else:
+                    raw = (json.dumps(document, indent=2) + "\n").encode("utf-8")
+                    mime = "application/json; charset=utf-8"
+                    filename = "hb-profiles.json"
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
                 return
             self.send_json(404, {"error": "not found"})
         except ApiError as exc:

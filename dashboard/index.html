@@ -84,6 +84,51 @@
 </section>
 
 <section>
+  <h2>Profiles</h2>
+  <p class="sub">Training builds labeled rows. Testing forces timeouts and errors. Baseline is an ordinary session. Saving a profile does not start a crawl.</p>
+  <div class="row" style="margin-top: 12px;">
+    <label>Profile
+      <select id="profile">
+        <option value="training">Training</option>
+        <option value="testing">Testing</option>
+        <option value="baseline" selected>Baseline</option>
+      </select>
+    </label>
+    <label>Geolocation <input id="geolocation" type="text" value="America/New_York" style="width: 12rem;"></label>
+    <label>Viewport <input id="viewport" type="text" value="1920x1080" style="width: 8rem;"></label>
+    <label>Cookies
+      <select id="cookie_state">
+        <option value="empty">Empty</option>
+        <option value="blocked">Blocked</option>
+        <option value="preserved">Preserved</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label>User agent <input id="user_agent" type="text" style="width: min(36rem, 100%);"></label>
+  </div>
+  <div class="row">
+    <label>Consent
+      <select id="consent">
+        <option value="reject">Reject</option>
+        <option value="accept">Accept</option>
+        <option value="absent">No banner</option>
+      </select>
+    </label>
+    <label class="chk"><input id="fingerprint_resistance" type="checkbox"> Fingerprint resistance</label>
+  </div>
+  <label>Script injection
+    <textarea id="inject_script" rows="2" style="width: 100%; margin-top: 8px;"></textarea>
+  </label>
+  <div class="row" style="margin-top: 8px;">
+    <button type="button" id="saveprofile">Save profile</button>
+    <a id="exportjson" href="/api/export.json">Export JSON</a>
+    <a id="exportcsv" href="/api/export.csv">Export CSV</a>
+  </div>
+  <div id="profilesummary"></div>
+</section>
+
+<section>
   <h2>Crawl controls</h2>
   <p class="sub">Callstack capture stays off. It cannot start in this build.</p>
   <div class="row" style="margin-top: 12px;">
@@ -184,7 +229,15 @@
       cookie: document.getElementById("cookie").checked,
       navigation: document.getElementById("navigation").checked,
       js: document.getElementById("js").checked,
-      dns: document.getElementById("dns").checked
+      dns: document.getElementById("dns").checked,
+      profile: document.getElementById("profile").value,
+      user_agent: document.getElementById("user_agent").value,
+      viewport: document.getElementById("viewport").value,
+      geolocation: document.getElementById("geolocation").value,
+      cookie_state: document.getElementById("cookie_state").value,
+      inject_script: document.getElementById("inject_script").value,
+      consent: document.getElementById("consent").value,
+      fingerprint_resistance: document.getElementById("fingerprint_resistance").checked
     };
   }
 
@@ -192,9 +245,27 @@
     ["dwell", "timeout"].forEach(function (id) {
       if (settings[id] != null) document.getElementById(id).value = settings[id];
     });
-    ["headless", "http", "cookie", "navigation", "js", "dns"].forEach(function (id) {
+    ["headless", "http", "cookie", "navigation", "js", "dns", "fingerprint_resistance"].forEach(function (id) {
       if (typeof settings[id] === "boolean") document.getElementById(id).checked = settings[id];
     });
+    ["profile", "user_agent", "viewport", "geolocation", "cookie_state", "inject_script", "consent"].forEach(function (id) {
+      if (settings[id]) document.getElementById(id).value = settings[id];
+    });
+  }
+
+  function paintSummary(rows) {
+    const box = document.getElementById("profilesummary");
+    if (!rows || !rows.length) {
+      box.textContent = "";
+      return;
+    }
+    const head = "<tr><th>Profile</th><th>Winner</th><th>CPM</th><th>Error rate</th><th>Bids</th><th>Cookies</th></tr>";
+    const body = rows.map(function (row) {
+      return "<tr><td>" + row.profile + "</td><td>" + (row.winner || "none") + "</td><td>" +
+        (row.clearing_cpm == null ? "" : row.clearing_cpm) + "</td><td>" + row.error_rate +
+        "</td><td>" + row.bid_count + "</td><td>" + row.cookie_state + "</td></tr>";
+    }).join("");
+    box.innerHTML = "<table class=\"grid\" style=\"margin-top:12px;width:100%;\">" + head + body + "</table>";
   }
 
   function setPhase(name) {
@@ -275,6 +346,33 @@
     delete linksEl.dataset.dirty;
     refresh().catch(function (err) { showErr(runErr, err.message); });
   });
+  let presets = null;
+  function applyPreset(name) {
+    const preset = presets && presets[name];
+    if (!preset) return;
+    document.getElementById("user_agent").value = preset.user_agent || "";
+    document.getElementById("viewport").value = preset.viewport || "";
+    document.getElementById("geolocation").value = preset.geolocation || "";
+    document.getElementById("cookie_state").value = preset.cookie_state || "preserved";
+    document.getElementById("inject_script").value = preset.inject_script || "";
+    document.getElementById("consent").value = preset.consent || "accept";
+    document.getElementById("fingerprint_resistance").checked = !!preset.fingerprint_resistance;
+  }
+  function loadSummary() {
+    return fetch("/api/profiles").then(function (res) { return res.json(); }).then(function (data) {
+      presets = data.profiles || {};
+      paintSummary(data.summary || []);
+    });
+  }
+  document.getElementById("profile").addEventListener("change", function () {
+    applyPreset(document.getElementById("profile").value);
+  });
+  document.getElementById("saveprofile").addEventListener("click", function () {
+    showErr(runErr, "");
+    send("/api/settings", settingsBody()).then(loadSummary)
+      .catch(function (err) { showErr(runErr, err.message); });
+  });
+  loadSummary().catch(function (err) { showErr(runErr, err.message); });
   refresh().catch(function (err) { showErr(runErr, err.message); });
   setInterval(function () { refresh().catch(function () {}); }, 5000);
 })();
