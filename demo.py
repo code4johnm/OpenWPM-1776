@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -13,14 +14,13 @@ from openwpm.task_manager import TaskManager
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--tranco", action="store_true", default=False)
-parser.add_argument("--headless", action="store_true", default=False),
+parser.add_argument("--headless", action="store_true", default=False)
 
 args = parser.parse_args()
 
 sites = [
-    "http://www.example.com",
-    "http://www.princeton.edu",
-    "http://citp.princeton.edu/",
+    "https://www.cooksdefensellc.com",
+    "https://www.quantumresearchlaboratories.com",
 ]
 if args.tranco:
     # Load the latest tranco list. See https://tranco-list.eu/
@@ -31,8 +31,11 @@ if args.tranco:
 
 
 display_mode: Literal["native", "headless", "xvfb"] = "native"
-if args.headless:
+env_display = os.environ.get("DISPLAY_MODE", "").lower()
+if args.headless or env_display == "headless":
     display_mode = "headless"
+elif env_display == "xvfb":
+    display_mode = "xvfb"
 
 # Loads the default ManagerParams
 # and NUM_BROWSERS copies of the default BrowserParams
@@ -59,8 +62,10 @@ for browser_param in browser_params:
     browser_param.maximum_profile_size = 50 * (10**20)  # 50 MB = 50 * 2^20 Bytes
 
 # Update TaskManager configuration (use this for crawl-wide settings)
-manager_params.data_directory = Path("./datadir/")
-manager_params.log_path = Path("./datadir/openwpm.log")
+# OPENWPM_DATADIR is set in the container; local runs still use ./datadir/
+data_directory = Path(os.environ.get("OPENWPM_DATADIR", "./datadir"))
+manager_params.data_directory = data_directory
+manager_params.log_path = data_directory / "openwpm.log"
 
 # memory_watchdog and process_watchdog are useful for large scale cloud crawls.
 # Please refer to docs/Configuration.md#platform-configuration-options for more information
@@ -72,7 +77,7 @@ manager_params.log_path = Path("./datadir/openwpm.log")
 with TaskManager(
     manager_params,
     browser_params,
-    SQLiteStorageProvider(Path("./datadir/crawl-data.sqlite")),
+    SQLiteStorageProvider(data_directory / "crawl-data.sqlite"),
     None,
 ) as manager:
     # Visits the sites

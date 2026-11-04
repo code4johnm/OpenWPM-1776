@@ -1,0 +1,68 @@
+# Build the OCI image and run python -m openwpm.smoke inside it.
+# Fail the pipeline on non-zero exit. Persistent capture is a tmp volume.
+name: Container smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - Dockerfile
+      - compose.yaml
+      - .dockerignore
+      - install.sh
+      - environment.yaml
+      - scripts/docker-entrypoint.sh
+      - scripts/install-chromium.sh
+      - scripts/install-conda.sh
+      - openwpm/**
+  pull_request:
+    paths:
+      - Dockerfile
+      - compose.yaml
+      - .dockerignore
+      - install.sh
+      - environment.yaml
+      - scripts/docker-entrypoint.sh
+      - scripts/install-chromium.sh
+      - scripts/install-conda.sh
+      - openwpm/**
+
+jobs:
+  image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: openwpm-1776:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke inside the image
+        run: |
+          mkdir -p docker-volume
+          docker run --rm --init --shm-size=2g \
+            -v "$PWD/docker-volume:/opt/OpenWPM/datadir" \
+            -e OPENWPM_NO_SANDBOX=1 \
+            -e OPENWPM_DISABLE_DEV_SHM=1 \
+            openwpm-1776:ci \
+            python -m openwpm.smoke --outdir /opt/OpenWPM/datadir
+          test -f docker-volume/smoke.png
+          test -f docker-volume/smoke.har
+      - name: Failure injection (bad command must be non-zero)
+        run: |
+          if docker run --rm --init --shm-size=2g \
+            -v "$PWD/docker-volume:/opt/OpenWPM/datadir" \
+            openwpm-1776:ci \
+            python -c "raise SystemExit(1)"; then
+            echo "expected non-zero exit" >&2
+            exit 1
+          fi
+          test -f docker-volume/smoke.png

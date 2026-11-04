@@ -1,0 +1,84 @@
+# Optional Kubernetes Job for a single crawl/smoke with capped retries.
+# Use this when Compose on one host is not enough (node loss, cluster queue).
+# OpenWPM is not an HTTP server — do not add fake liveness probes.
+#
+#   kubectl apply -f deploy/kubernetes/job.yaml
+#
+# Provide a PersistentVolumeClaim named openwpm-datadir (or edit the volume).
+# Shared memory: emptyDir medium Memory at /dev/shm (equivalent to --shm-size).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openwpm-smoke
+  labels:
+    app: openwpm-1776
+spec:
+  backoffLimit: 3
+  completions: 1
+  parallelism: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: openwpm-1776
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: openwpm
+          image: openwpm-1776:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - python
+            - -m
+            - openwpm.smoke
+            - --outdir
+            - /opt/OpenWPM/datadir
+          env:
+            - name: OPENWPM_NO_SANDBOX
+              value: "1"
+            - name: OPENWPM_DISABLE_DEV_SHM
+              value: "1"
+            - name: OPENWPM_DATADIR
+              value: /opt/OpenWPM/datadir
+          resources:
+            requests:
+              memory: 2Gi
+              cpu: "1"
+            limits:
+              memory: 8Gi
+              cpu: "2"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: datadir
+              mountPath: /opt/OpenWPM/datadir
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: datadir
+          persistentVolumeClaim:
+            claimName: openwpm-datadir
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openwpm-datadir
+  labels:
+    app: openwpm-1776
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi

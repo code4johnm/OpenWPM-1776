@@ -17,7 +17,7 @@
 - [Security and Privacy](#security-and-privacy)
 - [Architecture Overview](#architecture-overview)
 - [Storage](#storage)
-- [Docker Deployment](#docker-deployment)
+- [Containers](#containers)
 - [Advice for Measurement Researchers](#advice-for-measurement-researchers)
 - [Contributing](#contributing)
 - [Citation](#citation)
@@ -192,22 +192,20 @@ OpenWPM separates **structured** (tabular events) and **unstructured** (screensh
 diff -y openwpm/storage/schema.sql openwpm/storage/parquet_schema.py
 ```
 
-## Docker Deployment
+## Containers
 
-The official Docker image provides the most reproducible environment.
+Reproducible runtime is an OCI image (Docker, Podman, or Buildah) plus Compose. Kubernetes is optional.
 
 ```bash
-docker build -f Dockerfile -t openwpm .
+docker build -f Dockerfile -t openwpm-1776:local .
 mkdir -p docker-volume
-xhost +local:docker   # Linux GUI forwarding
-docker run -v $PWD/docker-volume:/opt/OpenWPM/datadir \
-  -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix --shm-size=2g \
-  -it --init openwpm
+sudo chown -R 10001:10001 docker-volume   # image runs as uid 10001
+docker compose run --rm openwpm           # python -m openwpm.smoke → docker-volume/
 ```
 
-**Important:** `--shm-size=2g` (or higher) is required to prevent Chromium crashes on many sites. The image sets `OPENWPM_NO_SANDBOX=1` because the container has no Chromium sandbox user namespace.
+`--shm-size=2g` (Compose `shm_size: 2gb`) is required. Chromium’s renderer sandbox is **off** in this image (`OPENWPM_NO_SANDBOX=1`). Capture must stay on the `datadir` volume, not the ephemeral rootfs.
 
-See the full Docker section in the original documentation and `scripts/run-on-osx-via-docker.sh` for macOS.
+Full build/run/failure matrix: [docs/Containers.md](docs/Containers.md). macOS X11 helper: `scripts/run-on-osx-via-docker.sh`.
 
 ## Advice for Measurement Researchers
 

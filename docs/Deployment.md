@@ -1,7 +1,7 @@
 # Deployment Guide
 
-**Document Version:** 1.0  
-**OpenWPM Version:** 0.34.0  
+**Document Version:** 1.1  
+**OpenWPM Version:** 0.35.0  
 **Last Updated:** 2026-05-27T02:47:30Z  
 **Workspace:** OpenWPM-1776
 
@@ -33,8 +33,10 @@ The root `Dockerfile` produces a complete, reproducible image based on Ubuntu 22
 
 ### Building the Image
 
+See [Containers.md](Containers.md) for Compose, Podman, failed-state handling, and optional Kubernetes Jobs.
+
 ```bash
-docker build -f Dockerfile -t openwpm:0.34.0 .
+docker build -f Dockerfile -t openwpm-1776:0.35.0 .
 ```
 
 ### Running a Measurement

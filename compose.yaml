@@ -1,0 +1,65 @@
+# OpenWPM-1776 local orchestration (Docker Compose or Podman Compose).
+#
+#   docker compose run --rm openwpm
+#   docker compose --profile demo run --rm demo
+#   docker compose --profile crawl run --rm crawl
+#
+# Capture lands in ./docker-volume (host) → /opt/OpenWPM/datadir (container).
+# Never bind-mount over /opt/ms-playwright.
+#
+# Restart: smoke is one-shot (restart: "no") so the orchestrator sees the exit
+# code. demo/crawl use on-failure with a cap — not an infinite crash loop.
+# In-platform watchdogs restart *browsers*; Compose restarts the *container*.
+
+x-openwpm: &openwpm
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: openwpm-1776:local
+  init: true
+  shm_size: "2gb"
+  # mem_limit: 8g   # uncomment to cap; ~2–4 GiB RAM per browser plus Playwright
+  stop_grace_period: 30s
+  user: "10001:10001"
+  volumes:
+    - ./docker-volume:/opt/OpenWPM/datadir
+  environment:
+    OPENWPM_NO_SANDBOX: "1"
+    OPENWPM_DISABLE_DEV_SHM: "1"
+    OPENWPM_DATADIR: /opt/OpenWPM/datadir
+    # DISPLAY_MODE is read by crawler.py
+    DISPLAY_MODE: headless
+  # No privileged. No extra capabilities. Chromium sandbox is already off
+  # inside this image; adding privileged would only increase residual risk.
+
+services:
+  # Default profile: headless smoke. Persist HAR/screenshot on the volume.
+  openwpm:
+    <<: *openwpm
+    restart: "no"
+    command:
+      - python
+      - -m
+      - openwpm.smoke
+      - --outdir
+      - /opt/OpenWPM/datadir
+
+  demo:
+    <<: *openwpm
+    profiles: ["demo"]
+    restart: "on-failure:3"
+    command: ["python", "demo.py", "--headless"]
+
+  crawl:
+    <<: *openwpm
+    profiles: ["crawl"]
+    restart: "on-failure:3"
+    environment:
+      OPENWPM_NO_SANDBOX: "1"
+      OPENWPM_DISABLE_DEV_SHM: "1"
+      OPENWPM_DATADIR: /opt/OpenWPM/datadir
+      DISPLAY_MODE: headless
+      # crawler.py still defaults CALLSTACK_INSTRUMENT=1 which cannot start;
+      # force 0 until the platform default is fixed.
+      CALLSTACK_INSTRUMENT: "0"
+    command: ["python", "crawler.py"]

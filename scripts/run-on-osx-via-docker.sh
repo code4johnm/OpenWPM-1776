@@ -24,8 +24,12 @@ if [ "$#" == 0 ]; then
 else
     echo "Running '$*' in the Docker environment"
 fi
+# Dev bind-mount of source is OK; do not mount over /opt/ms-playwright.
+# Prefer compose.yaml for smoke/demo. Capture: docker-volume → datadir.
 docker run \
-    -v "$PWD"/docker-volume:/home/user/Desktop/ \
+    -v "$PWD"/docker-volume:/opt/OpenWPM/datadir \
     -v "$PWD":/opt/OpenWPM/ \
     -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix --shm-size=2g \
-    -it --init openwpm "$@"
+    -e OPENWPM_NO_SANDBOX=1 \
+    --user 10001:10001 \
+    -it --init openwpm-1776:local "$@"
