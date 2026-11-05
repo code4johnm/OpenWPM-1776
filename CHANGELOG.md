@@ -540,3 +540,22 @@ Known Issues:
 - 0.2.0 - Complete re-write of HTTP Cookie parsing
 - 0.1.1 - Simplfied load of default settings, including wiki demo
 - 0.1.0 - Initial Public Release
+
+
+## 2026-11-05T11:00:07-05:00
+
+### Added
+
+- docs/packaging/
+- docs/sbom.cdx.json
+- docs/sbom.spdx.json
+
+### Modified
+
+- README.md
+
+### Diff stat
+
+    unstaged:
+     README.md | 4 ++++
+     1 file changed, 4 insertions(+)

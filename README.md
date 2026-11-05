@@ -251,3 +251,7 @@ Additional code has been incorporated from [FourthParty](https://github.com/four
 ---
 
 **Maintained by the OpenWPM community.** For the most up-to-date security guidance, always consult the latest version of [docs/Security-and-Privacy.md](docs/Security-and-Privacy.md).
+
+## Local dashboard packaging
+
+The laptop crawl dashboard is documented in [docs/packaging/index.md](docs/packaging/index.md). Start it with `python3 dashboard/server.py`. The pod manifest stays in the k3s console repo. This package does not add a second manifest and does not build `openwpm-1776:local`.

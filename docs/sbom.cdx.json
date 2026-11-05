@@ -1,0 +1,26 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "openwpm-dashboard",
+      "version": "local"
+    },
+    "properties": [
+      {
+        "name": "scope",
+        "value": "Dashboard process only. The measurement image is out of scope. Not an ATO."
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "container",
+      "name": "python",
+      "version": "3.12-alpine",
+      "description": "Named by k38-dashboard/deploy/openwpm-dashboard.yaml. Digest not pinned in that file."
+    }
+  ]
+}

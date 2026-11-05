@@ -1,0 +1,46 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "openwpm-dashboard",
+  "documentNamespace": "https://local.invalid/openwpm-dashboard/sbom",
+  "creationInfo": {
+    "created": "2026-11-04T21:20:00Z",
+    "creators": [
+      "Tool: service-packaging"
+    ]
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-app",
+      "name": "openwpm-dashboard",
+      "versionInfo": "local",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-dep-0",
+      "name": "python",
+      "versionInfo": "3.12-alpine",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "comment": "Named by k38-dashboard/deploy/openwpm-dashboard.yaml. Digest not pinned in that file."
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relatedSpdxElement": "SPDXRef-app",
+      "relationshipType": "DESCRIBES"
+    },
+    {
+      "spdxElementId": "SPDXRef-app",
+      "relatedSpdxElement": "SPDXRef-dep-0",
+      "relationshipType": "DEPENDS_ON"
+    }
+  ]
+}
