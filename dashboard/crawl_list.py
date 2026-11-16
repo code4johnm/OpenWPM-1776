@@ -61,7 +61,11 @@ def urls_from(doc: dict) -> list[str]:
 
 def main() -> int:
     DATA.mkdir(parents=True, exist_ok=True)
-    os.chmod(DATA, 0o777)
+    try:
+        os.chmod(DATA, 0o777)
+    except PermissionError:
+        if not os.access(DATA, os.W_OK):
+            raise
     settings = load_json(
         SETTINGS,
         {"dwell": 3, "timeout": 60, "headless": True, "http": True, "cookie": True, "navigation": True, "js": True, "dns": True},
